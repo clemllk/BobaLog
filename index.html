@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <title>KittyLog 🐾</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #fef9f0; font-family: Georgia, serif; }
+    input[type="datetime-local"] { color-scheme: light; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+// ─── CONFIG — paste your Supabase values here ─────────────────────────────────
+const SUPABASE_URL = "https://pjhrvzybehrvopagbdtb.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_6_aPywTif6YDsodDeusPow_rd4DwkX1";
+const CAT_NAME_KEY = "kittylog_cat";
+const USERNAME_KEY = "kittylog_user";
+// ─────────────────────────────────────────────────────────────────────────────
+
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const { useState, useEffect, useCallback, useRef } = React;
+
+const QUICK_OFFSETS = [
+  { label: "Now", minutes: 0 },
+  { label: "30m ago", minutes: 30 },
+  { label: "1h ago", minutes: 60 },
+  { label: "1.5h ago", minutes: 90 },
+  { label: "2h ago", minutes: 120 },
+  { label: "3h ago", minutes: 180 },
+];
+
+function fmt(date) {
+  return new Intl.DateTimeFormat("en-US",{hour:"numeric",minute:"2-digit",hour12:true}).format(date);
+}
+function fmtDate(date) {
+  const t = new Date(), y = new Date(t); y.setDate(y.getDate()-1);
+  if (date.toDateString()===t.toDateString()) return "Today";
+  if (date.toDateString()===y.toDateString()) return "Yesterday";
+  return new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric"}).format(date);
+}
+function timeSince(date) {
+  const s = Math.floor((new Date()-date)/1000);
+  if (s<60) return "just now";
+  const m = Math.floor(s/60); if (m<60) return `${m}m ago`;
+  const h = Math.floor(m/60); if (h<24) return `${h}h ago`;
+  return `${Math.floor(h/24)}d ago`;
+}
+function toLocal(date) {
+  const d = new Date(date);
+  d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
+  return d.toISOString().slice(0,16);
+}
+function groupByDate(events) {
+  const g={};
+  events.forEach(e=>{
+    const k=new Date(e.timestamp).toDateString();
+    if(!g[k]) g[k]=[];
+    g[k].push(e);
+  });
+  return g;
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────────
+function App() {
+  const [events, setEvents] = useState([]);
+  const [catName, setCatName] = useState(localStorage.getItem(CAT_NAME_KEY)||"");
+  const [username, setUsername] = useState(localStorage.getItem(USERNAME_KEY)||"");
+  const [showSetup, setShowSetup] = useState(!localStorage.getItem(USERNAME_KEY));
+  const [view, setView] = useState("log");
+  const [logForm, setLogForm] = useState(null);
+  const [status, setStatus] = useState("loading"); // loading | ok | error
+  const [ticker, setTicker] = useState(0);
+
+  // Load events
+  const loadEvents = useCallback(async () => {
+    const { data, error } = await db
+      .from("events")
+      .select("*")
+      .order("timestamp", { ascending: false })
+      .limit(500);
+    if (error) { setStatus("error"); return; }
+    setEvents(data||[]);
+    setStatus("ok");
+  }, []);
+
+  useEffect(() => { loadEvents(); }, [loadEvents]);
+
+  // Real-time subscription
+  useEffect(() => {
+    const channel = db.channel("events-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "events" }, () => {
+        loadEvents();
+      })
+      .subscribe();
+    return () => db.removeChannel(channel);
+  }, [loadEvents]);
+
+  useEffect(() => {
+    const id = setInterval(() => setTicker(t=>t+1), 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const addEvent = async () => {
+    if (!logForm) return;
+    const ts = logForm.useCustom
+      ? new Date(logForm.customTime).toISOString()
+      : new Date().toISOString();
+    const ev = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      type: logForm.type,
+      timestamp: ts,
+      logged_by: username,
+      note: logForm.note.trim()||null,
+      cat_name: catName,
+    };
+    const { error } = await db.from("events").insert(ev);
+    if (error) alert("Save failed: "+error.message);
+    setLogForm(null);
+  };
+
+  const deleteEvent = async (id) => {
+    await db.from("events").delete().eq("id", id);
+    setEvents(ev => ev.filter(e=>e.id!==id));
+  };
+
+  const completeSetup = (u, c) => {
+    localStorage.setItem(USERNAME_KEY, u);
+    localStorage.setItem(CAT_NAME_KEY, c);
+    setUsername(u); setCatName(c);
+    setShowSetup(false);
+  };
+
+  const openForm = (type) => {
+    setLogForm({ type, note:"", customTime:toLocal(new Date()), useCustom:false, quickOffset:0 });
+  };
+  const applyOffset = (minutes) => {
+    const t = new Date(Date.now()-minutes*60000);
+    setLogForm(f=>({...f, quickOffset:minutes, customTime:toLocal(t), useCustom:minutes!==0}));
+  };
+
+  // Stats
+  const now = new Date();
+  const last7 = events.filter(e=>(now-new Date(e.timestamp))/(1000*60*60*24)<=7);
+  const stats = {
+    poops: last7.filter(e=>e.type==="poop").length,
+    pees: last7.filter(e=>e.type==="pee").length,
+    lastPoop: events.find(e=>e.type==="poop"),
+    lastPee: events.find(e=>e.type==="pee"),
+  };
+
+  if (showSetup) return <Setup onDone={completeSetup} defaultCat={catName}/>;
+
+  return (
+    <div style={S.app}>
+      <header style={S.header}>
+        <div style={S.hInner}>
+          <div style={S.hLeft}><span style={{fontSize:26}}>🐾</span>
+            <div><div style={S.appName}>KittyLog</div>
+              <div style={S.catLabel}>{catName}'s diary</div></div>
+          </div>
+          <div style={S.userChip}>
+            <span style={{...S.dot, background: status==="ok"?"#7fff7f":status==="error"?"#ff6b6b":"#ffd700"}}/>
+            {username}
+          </div>
+        </div>
+      </header>
+
+      {/* Status banner */}
+      <div style={S.banner}>
+        <Stat emoji="💩" label="Last poop" value={stats.lastPoop?timeSince(new Date(stats.lastPoop.timestamp)):"None yet"} urgent={stats.lastPoop&&(now-new Date(stats.lastPoop.timestamp))>1000*60*60*36}/>
+        <div style={S.div}/>
+        <Stat emoji="💧" label="Last pee" value={stats.lastPee?timeSince(new Date(stats.lastPee.timestamp)):"None yet"} urgent={stats.lastPee&&(now-new Date(stats.lastPee.timestamp))>1000*60*60*18}/>
+        <div style={S.div}/>
+        <Stat emoji="📅" label="This week" value={`${stats.poops}💩 ${stats.pees}💧`}/>
+      </div>
+
+      {/* Buttons */}
+      <div style={S.logSec}>
+        <p style={S.prompt}>What did {catName} do?</p>
+        <div style={S.btnRow}>
+          <button style={{...S.logBtn,...S.poopBtn}} onClick={()=>openForm("poop")}>
+            <span style={{fontSize:36}}>💩</span><span style={S.btnLbl}>Pooped</span>
+          </button>
+          <button style={{...S.logBtn,...S.peeBtn}} onClick={()=>openForm("pee")}>
+            <span style={{fontSize:36}}>💧</span><span style={S.btnLbl}>Peed</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Log form */}
+      {logForm && (
+        <div style={S.backdrop} onClick={()=>setLogForm(null)}>
+          <div style={S.modal} onClick={e=>e.stopPropagation()}>
+            <div style={S.modalTitle}>{logForm.type==="poop"?"💩 Log Poop":"💧 Log Pee"}</div>
+            <div style={S.fSec}>
+              <label style={S.lbl}>Quick time</label>
+              <div style={S.quickRow}>
+                {QUICK_OFFSETS.map(o=>(
+                  <button key={o.minutes}
+                    style={{...S.qBtn,...(logForm.quickOffset===o.minutes?S.qBtnOn:{})}}
+                    onClick={()=>applyOffset(o.minutes)}>{o.label}</button>
+                ))}
+              </div>
+            </div>
+            <div style={S.fSec}>
+              <label style={S.lbl}>Custom time</label>
+              <input type="datetime-local" style={S.input} value={logForm.customTime}
+                onChange={e=>setLogForm(f=>({...f,customTime:e.target.value,useCustom:true,quickOffset:-1}))}/>
+            </div>
+            <div style={S.fSec}>
+              <label style={S.lbl}>Note (optional)</label>
+              <input style={S.input} placeholder='e.g. "solid", "runny", "outside box"…'
+                value={logForm.note} onChange={e=>setLogForm(f=>({...f,note:e.target.value}))}/>
+            </div>
+            <div style={S.mBtns}>
+              <button style={S.cancelBtn} onClick={()=>setLogForm(null)}>Cancel</button>
+              <button style={S.confirmBtn} onClick={addEvent}>Log {logForm.type==="poop"?"💩":"💧"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Nav */}
+      <div style={S.nav}>
+        {[["log","📋 Log"],["calendar","📅 Cal"],["stats","📊 Stats"],["settings","⚙️"]].map(([v,l])=>(
+          <button key={v} style={{...S.navBtn,...(view===v?S.navOn:{})}} onClick={()=>setView(v)}>{l}</button>
+        ))}
+      </div>
+
+      <div style={S.content}>
+        {view==="log" && <LogView events={events} onDelete={deleteEvent} catName={catName}/>}
+        {view==="calendar" && <CalView events={events}/>}
+        {view==="stats" && <StatsView events={events} catName={catName}/>}
+        {view==="settings" && <SettingsView catName={catName} username={username}
+          onUpdate={(u,c)=>{
+            localStorage.setItem(USERNAME_KEY,u); localStorage.setItem(CAT_NAME_KEY,c);
+            setUsername(u); setCatName(c);
+          }}/>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Setup ────────────────────────────────────────────────────────────────────
+function Setup({onDone, defaultCat}) {
+  const [u,setU]=useState(""); const [c,setC]=useState(defaultCat||"");
+  return (
+    <div style={S.setupWrap}>
+      <div style={S.setupCard}>
+        <div style={{fontSize:52}}>🐾</div>
+        <h1 style={S.setupTitle}>KittyLog</h1>
+        <p style={S.setupSub}>Track your cat's bathroom habits together</p>
+        <div style={{marginBottom:14}}><label style={S.lbl}>Your name</label>
+          <input style={S.input} placeholder="e.g. Alex" value={u} onChange={e=>setU(e.target.value)}/></div>
+        <div style={{marginBottom:14}}><label style={S.lbl}>Cat's name</label>
+          <input style={S.input} placeholder="e.g. Mochi" value={c} onChange={e=>setC(e.target.value)}/></div>
+        <button style={S.setupBtn} onClick={()=>onDone(u.trim()||"You", c.trim()||"Whiskers")}>Let's go! 🐱</button>
+        <p style={S.setupNote}>Share this URL with your partner — all events sync in real-time.</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Log View ─────────────────────────────────────────────────────────────────
+function LogView({events, onDelete, catName}) {
+  const grouped = groupByDate(events);
+  const keys = Object.keys(grouped).sort((a,b)=>new Date(b)-new Date(a));
+  if (!keys.length) return <div style={S.empty}><div style={{fontSize:48}}>🐱</div><p>No events yet!<br/>Tap a button when {catName} goes.</p></div>;
+  return <div>{keys.map(k=>(
+    <div key={k}>
+      <div style={S.dateHdr}>{fmtDate(new Date(k))}</div>
+      {grouped[k].map(ev=><EventRow key={ev.id} event={ev} onDelete={onDelete}/>)}
+    </div>
+  ))}</div>;
+}
+
+function EventRow({event, onDelete}) {
+  const [confirm,setConfirm]=useState(false);
+  return (
+    <div style={S.eRow}>
+      <div style={{fontSize:24,width:32,textAlign:"center"}}>{event.type==="poop"?"💩":"💧"}</div>
+      <div style={{flex:1}}>
+        <div style={S.eType}>{event.type==="poop"?"Pooped":"Peed"}
+          {event.note&&<span style={S.eNote}> · {event.note}</span>}</div>
+        <div style={S.eMeta}>{fmt(new Date(event.timestamp))} · {event.logged_by}</div>
+      </div>
+      {confirm
+        ?<><button style={S.delY} onClick={()=>onDelete(event.id)}>Yes</button>
+           <button style={S.delN} onClick={()=>setConfirm(false)}>No</button></>
+        :<button style={S.delBtn} onClick={()=>setConfirm(true)}>✕</button>}
+    </div>
+  );
+}
+
+// ─── Calendar ─────────────────────────────────────────────────────────────────
+function CalView({events}) {
+  const now = new Date();
+  const [cur, setCur] = useState({y:now.getFullYear(),m:now.getMonth()});
+  const [sel, setSel] = useState(null);
+  const {y,m} = cur;
+  const firstDay = new Date(y,m,1).getDay();
+  const days = new Date(y,m+1,0).getDate();
+  const monthLabel = new Intl.DateTimeFormat("en-US",{month:"long",year:"numeric"}).format(new Date(y,m));
+
+  const map={};
+  events.forEach(e=>{
+    const d=new Date(e.timestamp);
+    if(d.getFullYear()===y&&d.getMonth()===m){
+      const k=d.getDate();
+      if(!map[k]) map[k]={poop:0,pee:0,evs:[]};
+      map[k][e.type]++; map[k].evs.push(e);
+    }
+  });
+
+  const cells=[];
+  for(let i=0;i<firstDay;i++) cells.push(null);
+  for(let d=1;d<=days;d++) cells.push(d);
+
+  const selEvs = sel&&map[sel]?map[sel].evs.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp)):[];
+
+  return (
+    <div style={{padding:16}}>
+      <div style={S.calNav}>
+        <button style={S.calNBtn} onClick={()=>setCur(c=>{const nm=c.m===0?11:c.m-1;return{y:c.m===0?c.y-1:c.y,m:nm};})}>‹</button>
+        <span style={S.calMonth}>{monthLabel}</span>
+        <button style={S.calNBtn} onClick={()=>setCur(c=>{const nm=c.m===11?0:c.m+1;return{y:c.m===11?c.y+1:c.y,m:nm};})}>›</button>
+      </div>
+      <div style={S.calGrid}>
+        {["Su","Mo","Tu","We","Th","Fr","Sa"].map(d=><div key={d} style={S.calDH}>{d}</div>)}
+        {cells.map((day,i)=>{
+          if(!day) return <div key={`e${i}`}/>;
+          const info=map[day];
+          const isToday=now.getFullYear()===y&&now.getMonth()===m&&now.getDate()===day;
+          return (
+            <div key={day} style={{...S.calCell,...(isToday?S.calToday:{}),...(sel===day?S.calSel:{})}}
+              onClick={()=>setSel(sel===day?null:day)}>
+              <span style={S.calDN}>{day}</span>
+              {info&&<div style={{display:"flex",gap:2,flexWrap:"wrap",justifyContent:"center"}}>
+                {info.poop>0&&<span style={S.dPoop}>{info.poop>1?info.poop:""}</span>}
+                {info.pee>0&&<span style={S.dPee}>{info.pee>1?info.pee:""}</span>}
+              </div>}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:8,justifyContent:"center"}}>
+        <span style={S.dPoop}/><span style={{fontSize:12,color:"#6b5344"}}>Poop</span>
+        <span style={{...S.dPee,marginLeft:12}}/><span style={{fontSize:12,color:"#6b5344"}}>Pee</span>
+      </div>
+      {sel&&(
+        <div style={{marginTop:14,background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 2px 8px rgba(0,0,0,.06)"}}>
+          <div style={{fontWeight:"bold",fontSize:16,color:"#2d1f14",marginBottom:10}}>
+            {new Intl.DateTimeFormat("en-US",{month:"long",day:"numeric"}).format(new Date(y,m,sel))}
+          </div>
+          {selEvs.length===0?<p style={{color:"#9e8c79",fontSize:13}}>No events.</p>
+            :selEvs.map(ev=>(
+              <div key={ev.id} style={{display:"flex",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #faf0e4"}}>
+                <span style={{fontSize:18}}>{ev.type==="poop"?"💩":"💧"}</span>
+                <span style={{fontSize:14,color:"#2d1f14",marginLeft:8}}>{fmt(new Date(ev.timestamp))}</span>
+                {ev.note&&<span style={S.eNote}>{ev.note}</span>}
+                <span style={{fontSize:12,color:"#b0a090",marginLeft:"auto"}}>by {ev.logged_by}</span>
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
+function StatsView({events,catName}) {
+  const now=new Date();
+  const cnt=(days,type)=>events.filter(e=>e.type===type&&(now-new Date(e.timestamp))/(1000*60*60*24)<=days).length;
+  const avg=(type)=>{
+    const t=events.filter(e=>e.type===type);
+    if(t.length<2) return t.length;
+    const old=new Date(t[t.length-1].timestamp);
+    return (t.length/Math.max(1,(now-old)/(1000*60*60*24))).toFixed(1);
+  };
+  const uc={};
+  events.forEach(e=>{uc[e.logged_by]=(uc[e.logged_by]||0)+1;});
+  return (
+    <div style={{padding:20}}>
+      <h2 style={S.statsTitle}>{catName}'s Overview</h2>
+      <div style={S.sGrid}>
+        {[["💩","Poops (7d)",cnt(7,"poop")],["💧","Pees (7d)",cnt(7,"pee")],["💩","Avg/day",avg("poop")],["💧","Avg/day",avg("pee")]].map(([e,l,v])=>(
+          <div key={l} style={S.sCard}><div style={{fontSize:28}}>{e}</div><div style={S.sVal}>{v}</div><div style={S.sLbl}>{l}</div></div>
+        ))}
+      </div>
+      <div style={S.secTitle}>Who's logging?</div>
+      {Object.entries(uc).sort((a,b)=>b[1]-a[1]).map(([u,c])=>(
+        <div key={u} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+          <span style={{width:80,fontSize:14,fontWeight:"bold",color:"#2d1f14"}}>{u}</span>
+          <div style={{flex:1,height:10,background:"#f0e6d3",borderRadius:5,overflow:"hidden"}}>
+            <div style={{height:"100%",background:"linear-gradient(90deg,#ff9a3c,#ff6b6b)",borderRadius:5,width:`${Math.min(100,(c/events.length)*100)}%`}}/>
+          </div>
+          <span style={{fontSize:13,color:"#9e8c79",width:55,textAlign:"right"}}>{c} logs</span>
+        </div>
+      ))}
+      <div style={S.secTitle}>Healthy ranges</div>
+      <div style={S.tip}>
+        <p>🟢 <b>Poop:</b> 1–2× per day</p>
+        <p>🟢 <b>Pee:</b> 2–4× per day</p>
+        <p>🔴 No poop in 48h or pee in 24h? See a vet.</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+function SettingsView({catName,username,onUpdate}) {
+  const [u,setU]=useState(username); const [c,setC]=useState(catName); const [saved,setSaved]=useState(false);
+  return (
+    <div style={{padding:20}}>
+      <h2 style={S.statsTitle}>Settings</h2>
+      <div style={{marginBottom:14}}><label style={S.lbl}>Your name</label>
+        <input style={S.input} value={u} onChange={e=>setU(e.target.value)}/></div>
+      <div style={{marginBottom:14}}><label style={S.lbl}>Cat's name</label>
+        <input style={S.input} value={c} onChange={e=>setC(e.target.value)}/></div>
+      <button style={S.saveBtn} onClick={()=>{onUpdate(u.trim()||"You",c.trim()||"Whiskers");setSaved(true);setTimeout(()=>setSaved(false),2000);}}>
+        {saved?"Saved ✓":"Save Changes"}</button>
+      <div style={S.secTitle}>Real-time sync</div>
+      <div style={S.tip}>
+        <p>✅ This version uses <b>Supabase</b> for real-time sync. Any poop or pee logged by you or your partner appears instantly for everyone.</p>
+        <p style={{marginTop:8}}>📱 <b>Add to Home Screen:</b> In Safari tap Share → "Add to Home Screen". In Chrome tap menu → "Add to Home Screen".</p>
+      </div>
+    </div>
+  );
+}
+
+function Stat({emoji,label,value,urgent}) {
+  return (
+    <div style={S.statItem}>
+      <span style={{fontSize:20}}>{emoji}</span>
+      <div><div style={S.statLbl}>{label}</div>
+        <div style={{...S.statVal,color:urgent?"#ef4444":"#1a1a2e"}}>{value}</div></div>
+    </div>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const S = {
+  app:{fontFamily:"Georgia,serif",background:"#fef9f0",minHeight:"100vh",maxWidth:480,margin:"0 auto",paddingBottom:40},
+  header:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",padding:"14px 20px",boxShadow:"0 2px 12px rgba(255,107,107,.3)"},
+  hInner:{display:"flex",alignItems:"center",justifyContent:"space-between"},
+  hLeft:{display:"flex",alignItems:"center",gap:10},
+  appName:{fontWeight:"bold",fontSize:20,color:"#fff"},
+  catLabel:{fontSize:12,color:"rgba(255,255,255,.8)"},
+  userChip:{background:"rgba(255,255,255,.25)",color:"#fff",padding:"4px 12px",borderRadius:20,fontSize:13,display:"flex",alignItems:"center",gap:6},
+  dot:{width:7,height:7,borderRadius:"50%",display:"inline-block"},
+  banner:{display:"flex",background:"#fff",borderBottom:"1px solid #f0e6d3",padding:"10px 0"},
+  statItem:{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"0 4px"},
+  div:{width:1,background:"#f0e6d3"},
+  statLbl:{fontSize:10,color:"#9e8c79",textTransform:"uppercase",letterSpacing:".5px"},
+  statVal:{fontSize:13,fontWeight:"bold"},
+  logSec:{padding:"20px 20px 14px",background:"#fef9f0"},
+  prompt:{textAlign:"center",color:"#6b5344",fontSize:14,margin:"0 0 12px",fontStyle:"italic"},
+  btnRow:{display:"flex",gap:14},
+  logBtn:{flex:1,border:"none",borderRadius:18,padding:"18px 0",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,boxShadow:"0 4px 16px rgba(0,0,0,.1)"},
+  poopBtn:{background:"linear-gradient(135deg,#8B4513,#a0522d)"},
+  peeBtn:{background:"linear-gradient(135deg,#f0c030,#f5a623)"},
+  btnLbl:{color:"#fff",fontWeight:"bold",fontSize:15},
+  backdrop:{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100},
+  modal:{background:"#fff",borderRadius:"20px 20px 0 0",padding:"24px 20px 32px",width:"100%",maxWidth:480,boxShadow:"0 -4px 30px rgba(0,0,0,.15)"},
+  modalTitle:{fontSize:20,fontWeight:"bold",color:"#2d1f14",marginBottom:18},
+  fSec:{marginBottom:16},
+  quickRow:{display:"flex",flexWrap:"wrap",gap:8,marginTop:6},
+  qBtn:{border:"1.5px solid #e8d5c0",borderRadius:20,padding:"6px 12px",fontSize:13,background:"#fef9f0",cursor:"pointer",color:"#6b5344"},
+  qBtnOn:{background:"#ff6b6b",borderColor:"#ff6b6b",color:"#fff",fontWeight:"bold"},
+  mBtns:{display:"flex",gap:10,marginTop:20},
+  cancelBtn:{flex:1,border:"1.5px solid #e8d5c0",borderRadius:12,padding:"12px 0",fontSize:15,background:"#fef9f0",cursor:"pointer",color:"#9e8c79"},
+  confirmBtn:{flex:2,border:"none",borderRadius:12,padding:"12px 0",fontSize:15,background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",fontWeight:"bold",cursor:"pointer"},
+  nav:{display:"flex",background:"#fff",borderTop:"1px solid #f0e6d3",borderBottom:"1px solid #f0e6d3"},
+  navBtn:{flex:1,border:"none",background:"transparent",padding:"11px 0",cursor:"pointer",fontSize:12,color:"#9e8c79"},
+  navOn:{color:"#ff6b6b",borderBottom:"2px solid #ff6b6b",fontWeight:"bold"},
+  content:{paddingBottom:20},
+  dateHdr:{padding:"10px 20px 6px",fontSize:11,fontWeight:"bold",color:"#9e8c79",textTransform:"uppercase",letterSpacing:"1px",background:"#fef3e2"},
+  eRow:{display:"flex",alignItems:"center",padding:"12px 20px",background:"#fff",borderBottom:"1px solid #faf0e4",gap:12},
+  eType:{fontSize:15,fontWeight:"bold",color:"#2d1f14"},
+  eNote:{color:"#9e8c79",fontWeight:"normal",fontStyle:"italic",fontSize:13},
+  eMeta:{fontSize:12,color:"#9e8c79",marginTop:2},
+  delBtn:{background:"transparent",border:"none",color:"#ccc",cursor:"pointer",fontSize:16,padding:"4px 6px"},
+  delY:{background:"#ef4444",color:"#fff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:12},
+  delN:{background:"#e5e7eb",color:"#333",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:12,marginLeft:4},
+  empty:{textAlign:"center",color:"#9e8c79",padding:"40px 20px",lineHeight:1.6},
+  calNav:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12},
+  calNBtn:{background:"transparent",border:"1.5px solid #e8d5c0",borderRadius:8,padding:"6px 16px",fontSize:18,cursor:"pointer",color:"#ff6b6b"},
+  calMonth:{fontSize:17,fontWeight:"bold",color:"#2d1f14"},
+  calGrid:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3},
+  calDH:{textAlign:"center",fontSize:11,color:"#9e8c79",fontWeight:"bold",padding:"4px 0",textTransform:"uppercase"},
+  calCell:{borderRadius:10,minHeight:52,padding:"4px 4px 2px",cursor:"pointer",background:"#fff",border:"1.5px solid transparent",display:"flex",flexDirection:"column",alignItems:"center"},
+  calToday:{border:"1.5px solid #ff9a3c",background:"#fff8f0"},
+  calSel:{background:"#fff0f0",border:"1.5px solid #ff6b6b"},
+  calDN:{fontSize:13,color:"#2d1f14",fontWeight:"bold",marginBottom:2},
+  dPoop:{width:10,height:10,borderRadius:"50%",background:"#8B4513",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#fff",fontWeight:"bold"},
+  dPee:{width:10,height:10,borderRadius:"50%",background:"#f5a623",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#fff",fontWeight:"bold"},
+  statsTitle:{fontSize:20,color:"#2d1f14",marginBottom:16},
+  sGrid:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24},
+  sCard:{background:"#fff",borderRadius:16,padding:"16px 12px",textAlign:"center",boxShadow:"0 2px 8px rgba(0,0,0,.06)"},
+  sVal:{fontSize:28,fontWeight:"bold",color:"#ff6b6b"},
+  sLbl:{fontSize:12,color:"#9e8c79",marginTop:2},
+  secTitle:{fontSize:12,fontWeight:"bold",color:"#9e8c79",textTransform:"uppercase",letterSpacing:"1px",marginBottom:10,marginTop:20},
+  tip:{background:"#fff",borderRadius:14,padding:"14px 16px",fontSize:13,lineHeight:1.7,color:"#4a3728",boxShadow:"0 2px 8px rgba(0,0,0,.05)"},
+  saveBtn:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",border:"none",borderRadius:12,padding:"12px 24px",cursor:"pointer",fontWeight:"bold",fontSize:15,marginBottom:8},
+  setupWrap:{minHeight:"100vh",background:"linear-gradient(160deg,#ff9a3c22,#ff6b6b11)",display:"flex",alignItems:"center",justifyContent:"center",padding:20},
+  setupCard:{background:"#fff",borderRadius:24,padding:"36px 28px",maxWidth:380,width:"100%",boxShadow:"0 8px 40px rgba(255,107,107,.15)",textAlign:"center"},
+  setupTitle:{fontSize:32,fontWeight:"bold",color:"#ff6b6b",margin:"0 0 6px"},
+  setupSub:{color:"#9e8c79",fontSize:15,marginBottom:28},
+  setupBtn:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",border:"none",borderRadius:14,padding:"14px 0",width:"100%",cursor:"pointer",fontWeight:"bold",fontSize:16,marginTop:8},
+  setupNote:{fontSize:12,color:"#b0a090",marginTop:18,lineHeight:1.6},
+  lbl:{display:"block",fontSize:12,color:"#9e8c79",fontWeight:"bold",textTransform:"uppercase",letterSpacing:".5px",marginBottom:6},
+  input:{width:"100%",border:"1.5px solid #e8d5c0",borderRadius:10,padding:"10px 14px",fontSize:15,background:"#fff",fontFamily:"Georgia,serif",outline:"none",boxSizing:"border-box"},
+};
+
+ReactDOM.render(<App/>, document.getElementById("root"));
+</script>
+</body>
+</html>
