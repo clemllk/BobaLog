@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+  <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
@@ -9,7 +9,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -19,47 +18,47 @@
 </head>
 <body>
 <div id="root"></div>
-
 <script type="text/babel">
+
 // ─── CONFIG — paste your Supabase values here ─────────────────────────────────
 const SUPABASE_URL = "https://pjhrvzybehrvopagbdtb.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_6_aPywTif6YDsodDeusPow_rd4DwkX1";
+// ─────────────────────────────────────────────────────────────────────────────
+
 const CAT_NAME_KEY = "kittylog_cat";
 const USERNAME_KEY = "kittylog_user";
-// ─────────────────────────────────────────────────────────────────────────────
 
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-const { useState, useEffect, useCallback, useRef } = React;
+const { useState, useEffect, useCallback } = React;
 
 const QUICK_OFFSETS = [
-  { label: "Now", minutes: 0 },
-  { label: "30m ago", minutes: 30 },
-  { label: "1h ago", minutes: 60 },
-  { label: "1.5h ago", minutes: 90 },
-  { label: "2h ago", minutes: 120 },
-  { label: "3h ago", minutes: 180 },
+  { label:"Now", minutes:0 },
+  { label:"30m ago", minutes:30 },
+  { label:"1h ago", minutes:60 },
+  { label:"1.5h ago", minutes:90 },
+  { label:"2h ago", minutes:120 },
+  { label:"3h ago", minutes:180 },
 ];
 
 function fmt(date) {
   return new Intl.DateTimeFormat("en-US",{hour:"numeric",minute:"2-digit",hour12:true}).format(date);
 }
 function fmtDate(date) {
-  const t = new Date(), y = new Date(t); y.setDate(y.getDate()-1);
-  if (date.toDateString()===t.toDateString()) return "Today";
-  if (date.toDateString()===y.toDateString()) return "Yesterday";
+  const t=new Date(), y=new Date(t); y.setDate(y.getDate()-1);
+  if(date.toDateString()===t.toDateString()) return "Today";
+  if(date.toDateString()===y.toDateString()) return "Yesterday";
   return new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric"}).format(date);
 }
 function timeSince(date) {
-  const s = Math.floor((new Date()-date)/1000);
-  if (s<60) return "just now";
-  const m = Math.floor(s/60); if (m<60) return `${m}m ago`;
-  const h = Math.floor(m/60); if (h<24) return `${h}h ago`;
+  const s=Math.floor((new Date()-date)/1000);
+  if(s<60) return "just now";
+  const m=Math.floor(s/60); if(m<60) return `${m}m ago`;
+  const h=Math.floor(m/60); if(h<24) return `${h}h ago`;
   return `${Math.floor(h/24)}d ago`;
 }
 function toLocal(date) {
-  const d = new Date(date);
+  const d=new Date(date);
   d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
   return d.toISOString().slice(0,16);
 }
@@ -73,135 +72,159 @@ function groupByDate(events) {
   return g;
 }
 
+// ─── Health Score ─────────────────────────────────────────────────────────────
+function calcHealth(events) {
+  const now=new Date();
+  const last7=events.filter(e=>(now-new Date(e.timestamp))/(1000*60*60*24)<=7);
+  const poopCount=last7.filter(e=>e.type==="poop").length;
+  const peeCount=last7.filter(e=>e.type==="pee").length;
+
+  let poopScore=0;
+  if(poopCount>=7&&poopCount<=14) poopScore=50;
+  else if(poopCount>=5&&poopCount<=16) poopScore=38;
+  else if(poopCount>=3&&poopCount<=18) poopScore=25;
+  else if(poopCount>0) poopScore=12;
+
+  let peeScore=0;
+  if(peeCount>=14&&peeCount<=28) peeScore=50;
+  else if(peeCount>=10&&peeCount<=32) peeScore=38;
+  else if(peeCount>=6&&peeCount<=36) peeScore=25;
+  else if(peeCount>0) peeScore=12;
+
+  const lastPoop=events.find(e=>e.type==="poop");
+  const lastPee=events.find(e=>e.type==="pee");
+  const hoursSincePoop=lastPoop?(now-new Date(lastPoop.timestamp))/(1000*60*60):999;
+  const hoursSincePee=lastPee?(now-new Date(lastPee.timestamp))/(1000*60*60):999;
+
+  let total=poopScore+peeScore;
+  if(hoursSincePoop>48||hoursSincePee>24) total=Math.min(total,40);
+  if(events.length===0) total=0;
+
+  let label,color,emoji,detail;
+  if(total>=90){label="Excellent";color="#22c55e";emoji="😸";detail="Perfect bathroom habits!";}
+  else if(total>=70){label="Good";color="#84cc16";emoji="😺";detail="Healthy & regular";}
+  else if(total>=50){label="Fair";color="#f59e0b";emoji="🙀";detail="Slightly off schedule";}
+  else if(total>=25){label="Poor";color="#ef4444";emoji="😿";detail="Needs attention";}
+  else if(total>0){label="Critical";color="#dc2626";emoji="🚨";detail="See a vet soon!";}
+  else{label="No Data";color="#9e8c79";emoji="🐱";detail="Start logging to track health";}
+
+  return{score:total,label,color,emoji,detail,poopCount,peeCount,hoursSincePoop,hoursSincePee};
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 function App() {
-  const [events, setEvents] = useState([]);
-  const [catName, setCatName] = useState(localStorage.getItem(CAT_NAME_KEY)||"");
-  const [username, setUsername] = useState(localStorage.getItem(USERNAME_KEY)||"");
-  const [showSetup, setShowSetup] = useState(!localStorage.getItem(USERNAME_KEY));
-  const [view, setView] = useState("log");
-  const [logForm, setLogForm] = useState(null);
-  const [status, setStatus] = useState("loading"); // loading | ok | error
-  const [ticker, setTicker] = useState(0);
+  const [events,setEvents]=useState([]);
+  const [catName,setCatName]=useState(localStorage.getItem(CAT_NAME_KEY)||"Whiskers");
+  const [username,setUsername]=useState(localStorage.getItem(USERNAME_KEY)||"");
+  const [showSetup,setShowSetup]=useState(!localStorage.getItem(USERNAME_KEY));
+  const [view,setView]=useState("log");
+  const [logForm,setLogForm]=useState(null);
+  const [pulse,setPulse]=useState(null);
+  const [status,setStatus]=useState("loading");
+  const [ticker,setTicker]=useState(0);
 
-  // Load events
-  const loadEvents = useCallback(async () => {
-    const { data, error } = await db
-      .from("events")
-      .select("*")
-      .order("timestamp", { ascending: false })
-      .limit(500);
-    if (error) { setStatus("error"); return; }
+  const loadEvents=useCallback(async()=>{
+    const{data,error}=await db.from("events").select("*").order("timestamp",{ascending:false}).limit(500);
+    if(error){setStatus("error");return;}
     setEvents(data||[]);
     setStatus("ok");
-  }, []);
+  },[]);
 
-  useEffect(() => { loadEvents(); }, [loadEvents]);
+  useEffect(()=>{loadEvents();},[loadEvents]);
 
-  // Real-time subscription
-  useEffect(() => {
-    const channel = db.channel("events-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "events" }, () => {
-        loadEvents();
-      })
+  useEffect(()=>{
+    const ch=db.channel("events-rt")
+      .on("postgres_changes",{event:"*",schema:"public",table:"events"},()=>loadEvents())
       .subscribe();
-    return () => db.removeChannel(channel);
-  }, [loadEvents]);
+    return()=>db.removeChannel(ch);
+  },[loadEvents]);
 
-  useEffect(() => {
-    const id = setInterval(() => setTicker(t=>t+1), 30000);
-    return () => clearInterval(id);
-  }, []);
+  useEffect(()=>{const id=setInterval(()=>setTicker(t=>t+1),30000);return()=>clearInterval(id);},[]);
 
-  const addEvent = async () => {
-    if (!logForm) return;
-    const ts = logForm.useCustom
-      ? new Date(logForm.customTime).toISOString()
-      : new Date().toISOString();
-    const ev = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      type: logForm.type,
-      timestamp: ts,
-      logged_by: username,
-      note: logForm.note.trim()||null,
-      cat_name: catName,
+  const addEvent=async()=>{
+    if(!logForm) return;
+    const ts=logForm.useCustom?new Date(logForm.customTime).toISOString():new Date().toISOString();
+    const ev={
+      id:`${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      type:logForm.type,
+      timestamp:ts,
+      logged_by:username,
+      note:logForm.note.trim()||null,
+      cat_name:catName,
     };
-    const { error } = await db.from("events").insert(ev);
-    if (error) alert("Save failed: "+error.message);
+    const{error}=await db.from("events").insert(ev);
+    if(error){alert("Save failed: "+error.message);return;}
+    setPulse(logForm.type);setTimeout(()=>setPulse(null),700);
     setLogForm(null);
   };
 
-  const deleteEvent = async (id) => {
-    await db.from("events").delete().eq("id", id);
-    setEvents(ev => ev.filter(e=>e.id!==id));
+  const deleteEvent=async(id)=>{
+    await db.from("events").delete().eq("id",id);
+    setEvents(ev=>ev.filter(e=>e.id!==id));
   };
 
-  const completeSetup = (u, c) => {
-    localStorage.setItem(USERNAME_KEY, u);
-    localStorage.setItem(CAT_NAME_KEY, c);
-    setUsername(u); setCatName(c);
-    setShowSetup(false);
+  const completeSetup=(u,c)=>{
+    localStorage.setItem(USERNAME_KEY,u);
+    localStorage.setItem(CAT_NAME_KEY,c);
+    setUsername(u);setCatName(c);setShowSetup(false);
   };
 
-  const openForm = (type) => {
-    setLogForm({ type, note:"", customTime:toLocal(new Date()), useCustom:false, quickOffset:0 });
-  };
-  const applyOffset = (minutes) => {
-    const t = new Date(Date.now()-minutes*60000);
-    setLogForm(f=>({...f, quickOffset:minutes, customTime:toLocal(t), useCustom:minutes!==0}));
+  const openForm=(type)=>setLogForm({type,note:"",customTime:toLocal(new Date()),useCustom:false,quickOffset:0});
+  const applyOffset=(minutes)=>{
+    const t=new Date(Date.now()-minutes*60000);
+    setLogForm(f=>({...f,quickOffset:minutes,customTime:toLocal(t),useCustom:minutes!==0}));
   };
 
-  // Stats
-  const now = new Date();
-  const last7 = events.filter(e=>(now-new Date(e.timestamp))/(1000*60*60*24)<=7);
-  const stats = {
-    poops: last7.filter(e=>e.type==="poop").length,
-    pees: last7.filter(e=>e.type==="pee").length,
-    lastPoop: events.find(e=>e.type==="poop"),
-    lastPee: events.find(e=>e.type==="pee"),
+  const now=new Date();
+  const last7=events.filter(e=>(now-new Date(e.timestamp))/(1000*60*60*24)<=7);
+  const stats={
+    poops:last7.filter(e=>e.type==="poop").length,
+    pees:last7.filter(e=>e.type==="pee").length,
+    lastPoop:events.find(e=>e.type==="poop"),
+    lastPee:events.find(e=>e.type==="pee"),
   };
+  const health=calcHealth(events);
 
-  if (showSetup) return <Setup onDone={completeSetup} defaultCat={catName}/>;
+  if(showSetup) return <Setup onDone={completeSetup} defaultCat={catName}/>;
 
   return (
     <div style={S.app}>
       <header style={S.header}>
         <div style={S.hInner}>
-          <div style={S.hLeft}><span style={{fontSize:26}}>🐾</span>
-            <div><div style={S.appName}>KittyLog</div>
-              <div style={S.catLabel}>{catName}'s diary</div></div>
+          <div style={S.hLeft}>
+            <span style={{fontSize:26}}>🐾</span>
+            <div><div style={S.appName}>KittyLog</div><div style={S.catLabel}>{catName}'s diary</div></div>
           </div>
           <div style={S.userChip}>
-            <span style={{...S.dot, background: status==="ok"?"#7fff7f":status==="error"?"#ff6b6b":"#ffd700"}}/>
+            <span style={{...S.dot,background:status==="ok"?"#7fff7f":status==="error"?"#ff6b6b":"#ffd700"}}/>
             {username}
           </div>
         </div>
       </header>
 
-      {/* Status banner */}
+      <HealthMeter health={health} catName={catName}/>
+
       <div style={S.banner}>
-        <Stat emoji="💩" label="Last poop" value={stats.lastPoop?timeSince(new Date(stats.lastPoop.timestamp)):"None yet"} urgent={stats.lastPoop&&(now-new Date(stats.lastPoop.timestamp))>1000*60*60*36}/>
-        <div style={S.div}/>
-        <Stat emoji="💧" label="Last pee" value={stats.lastPee?timeSince(new Date(stats.lastPee.timestamp)):"None yet"} urgent={stats.lastPee&&(now-new Date(stats.lastPee.timestamp))>1000*60*60*18}/>
-        <div style={S.div}/>
-        <Stat emoji="📅" label="This week" value={`${stats.poops}💩 ${stats.pees}💧`}/>
+        <StatItem emoji="💩" label="Last poop" value={stats.lastPoop?timeSince(new Date(stats.lastPoop.timestamp)):"None yet"} urgent={stats.lastPoop&&(now-new Date(stats.lastPoop.timestamp))>1000*60*60*36}/>
+        <div style={S.divider}/>
+        <StatItem emoji="💧" label="Last pee" value={stats.lastPee?timeSince(new Date(stats.lastPee.timestamp)):"None yet"} urgent={stats.lastPee&&(now-new Date(stats.lastPee.timestamp))>1000*60*60*18}/>
+        <div style={S.divider}/>
+        <StatItem emoji="📅" label="This week" value={`${stats.poops}💩 ${stats.pees}💧`}/>
       </div>
 
-      {/* Buttons */}
       <div style={S.logSec}>
         <p style={S.prompt}>What did {catName} do?</p>
         <div style={S.btnRow}>
-          <button style={{...S.logBtn,...S.poopBtn}} onClick={()=>openForm("poop")}>
+          <button style={{...S.logBtn,...S.poopBtn,transform:pulse==="poop"?"scale(.93)":"scale(1)"}} onClick={()=>openForm("poop")}>
             <span style={{fontSize:36}}>💩</span><span style={S.btnLbl}>Pooped</span>
           </button>
-          <button style={{...S.logBtn,...S.peeBtn}} onClick={()=>openForm("pee")}>
+          <button style={{...S.logBtn,...S.peeBtn,transform:pulse==="pee"?"scale(.93)":"scale(1)"}} onClick={()=>openForm("pee")}>
             <span style={{fontSize:36}}>💧</span><span style={S.btnLbl}>Peed</span>
           </button>
         </div>
       </div>
 
-      {/* Log form */}
-      {logForm && (
+      {logForm&&(
         <div style={S.backdrop} onClick={()=>setLogForm(null)}>
           <div style={S.modal} onClick={e=>e.stopPropagation()}>
             <div style={S.modalTitle}>{logForm.type==="poop"?"💩 Log Poop":"💧 Log Pee"}</div>
@@ -209,8 +232,7 @@ function App() {
               <label style={S.lbl}>Quick time</label>
               <div style={S.quickRow}>
                 {QUICK_OFFSETS.map(o=>(
-                  <button key={o.minutes}
-                    style={{...S.qBtn,...(logForm.quickOffset===o.minutes?S.qBtnOn:{})}}
+                  <button key={o.minutes} style={{...S.qBtn,...(logForm.quickOffset===o.minutes?S.qBtnOn:{})}}
                     onClick={()=>applyOffset(o.minutes)}>{o.label}</button>
                 ))}
               </div>
@@ -233,7 +255,6 @@ function App() {
         </div>
       )}
 
-      {/* Nav */}
       <div style={S.nav}>
         {[["log","📋 Log"],["calendar","📅 Cal"],["stats","📊 Stats"],["settings","⚙️"]].map(([v,l])=>(
           <button key={v} style={{...S.navBtn,...(view===v?S.navOn:{})}} onClick={()=>setView(v)}>{l}</button>
@@ -241,21 +262,18 @@ function App() {
       </div>
 
       <div style={S.content}>
-        {view==="log" && <LogView events={events} onDelete={deleteEvent} catName={catName}/>}
-        {view==="calendar" && <CalView events={events}/>}
-        {view==="stats" && <StatsView events={events} catName={catName}/>}
-        {view==="settings" && <SettingsView catName={catName} username={username}
-          onUpdate={(u,c)=>{
-            localStorage.setItem(USERNAME_KEY,u); localStorage.setItem(CAT_NAME_KEY,c);
-            setUsername(u); setCatName(c);
-          }}/>}
+        {view==="log"&&<LogView events={events} onDelete={deleteEvent} catName={catName}/>}
+        {view==="calendar"&&<CalView events={events}/>}
+        {view==="stats"&&<StatsView events={events} catName={catName} health={health}/>}
+        {view==="settings"&&<SettingsView catName={catName} username={username}
+          onUpdate={(u,c)=>{localStorage.setItem(USERNAME_KEY,u);localStorage.setItem(CAT_NAME_KEY,c);setUsername(u);setCatName(c);}}/>}
       </div>
     </div>
   );
 }
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
-function Setup({onDone, defaultCat}) {
+function Setup({onDone,defaultCat}) {
   const [u,setU]=useState(""); const [c,setC]=useState(defaultCat||"");
   return (
     <div style={S.setupWrap}>
@@ -267,18 +285,99 @@ function Setup({onDone, defaultCat}) {
           <input style={S.input} placeholder="e.g. Alex" value={u} onChange={e=>setU(e.target.value)}/></div>
         <div style={{marginBottom:14}}><label style={S.lbl}>Cat's name</label>
           <input style={S.input} placeholder="e.g. Mochi" value={c} onChange={e=>setC(e.target.value)}/></div>
-        <button style={S.setupBtn} onClick={()=>onDone(u.trim()||"You", c.trim()||"Whiskers")}>Let's go! 🐱</button>
+        <button style={S.setupBtn} onClick={()=>onDone(u.trim()||"You",c.trim()||"Whiskers")}>Let's go! 🐱</button>
         <p style={S.setupNote}>Share this URL with your partner — all events sync in real-time.</p>
       </div>
     </div>
   );
 }
 
+// ─── Health Meter ─────────────────────────────────────────────────────────────
+function HealthMeter({health,catName}) {
+  const{score,label,color,emoji,detail}=health;
+  const g1=score>=70?"#22c55e":score>=50?"#84cc16":score>=25?"#f59e0b":"#ef4444";
+  const g2=score>=70?"#16a34a":score>=50?"#65a30d":score>=25?"#d97706":"#dc2626";
+  return (
+    <div style={S.healthWrap}>
+      <div style={S.healthTop}>
+        <div style={{flex:1}}>
+          <div style={S.healthLabel}>{catName}'s Health</div>
+          <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+            <span style={{...S.healthScore,color}}>{score}</span>
+            <span style={S.healthMax}>/100</span>
+            <span style={{...S.healthBadge,background:color+"22",color}}>{label}</span>
+          </div>
+          <div style={S.healthDetail}>{detail}</div>
+        </div>
+        <div style={{fontSize:44,lineHeight:1}}>{emoji}</div>
+      </div>
+      <div style={S.barTrack}>
+        <div style={{...S.barFill,width:`${score}%`,background:`linear-gradient(90deg,${g1},${g2})`}}/>
+        {[25,50,70,90].map(t=><div key={t} style={{...S.tick,left:`${t}%`}}/>)}
+      </div>
+      <div style={S.barLabels}>
+        <span style={{color:"#dc2626",fontSize:10}}>Critical</span>
+        <span style={{color:"#f59e0b",fontSize:10}}>Fair</span>
+        <span style={{color:"#84cc16",fontSize:10}}>Good</span>
+        <span style={{color:"#22c55e",fontSize:10}}>Excellent</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Poop Leaderboard ─────────────────────────────────────────────────────────
+function PoopLeaderboard({events}) {
+  const poops=events.filter(e=>e.type==="poop");
+  const counts={};
+  poops.forEach(e=>{counts[e.logged_by]=(counts[e.logged_by]||0)+1;});
+  const ranked=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  const total=poops.length;
+  const medals=["🥇","🥈","🥉"];
+
+  if(!ranked.length) return (
+    <div style={S.tip}><p style={{textAlign:"center",color:"#9e8c79"}}>No poop logs yet — start logging to see rankings!</p></div>
+  );
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {ranked.map(([user,count],i)=>{
+        const pct=total>0?Math.round((count/total)*100):0;
+        const isFirst=i===0;
+        return (
+          <div key={user} style={{...S.lbRow,...(isFirst?S.lbFirst:{})}}>
+            <div style={{width:36,textAlign:"center"}}>
+              <span style={{fontSize:isFirst?28:20}}>{medals[i]||`#${i+1}`}</span>
+            </div>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <span style={{fontSize:isFirst?17:15,fontWeight:"bold",color:"#2d1f14"}}>{user}</span>
+                {isFirst&&<span style={S.lbCrown}>👑 Poop Champ</span>}
+              </div>
+              <div style={S.lbBarTrack}>
+                <div style={{...S.lbBarFill,width:`${pct}%`,
+                  background:i===0?"linear-gradient(90deg,#ff9a3c,#ff6b6b)":
+                             i===1?"linear-gradient(90deg,#94a3b8,#64748b)":
+                             "linear-gradient(90deg,#d97706,#b45309)"}}/>
+              </div>
+            </div>
+            <div style={{textAlign:"center",minWidth:60}}>
+              <span style={{display:"block",fontSize:22,fontWeight:"bold",color:"#ff6b6b",lineHeight:1}}>{count}</span>
+              <span style={{fontSize:10,color:"#9e8c79"}}>💩 cleaned</span>
+            </div>
+          </div>
+        );
+      })}
+      <div style={{textAlign:"center",fontSize:13,color:"#9e8c79",marginTop:4,paddingTop:8,borderTop:"1px solid #f0e6d3"}}>
+        Total poops cleaned: <b>{total}</b> 💩
+      </div>
+    </div>
+  );
+}
+
 // ─── Log View ─────────────────────────────────────────────────────────────────
-function LogView({events, onDelete, catName}) {
-  const grouped = groupByDate(events);
-  const keys = Object.keys(grouped).sort((a,b)=>new Date(b)-new Date(a));
-  if (!keys.length) return <div style={S.empty}><div style={{fontSize:48}}>🐱</div><p>No events yet!<br/>Tap a button when {catName} goes.</p></div>;
+function LogView({events,onDelete,catName}) {
+  const grouped=groupByDate(events);
+  const keys=Object.keys(grouped).sort((a,b)=>new Date(b)-new Date(a));
+  if(!keys.length) return <div style={S.empty}><div style={{fontSize:48}}>🐱</div><p>No events yet!<br/>Tap a button when {catName} goes.</p></div>;
   return <div>{keys.map(k=>(
     <div key={k}>
       <div style={S.dateHdr}>{fmtDate(new Date(k))}</div>
@@ -287,7 +386,7 @@ function LogView({events, onDelete, catName}) {
   ))}</div>;
 }
 
-function EventRow({event, onDelete}) {
+function EventRow({event,onDelete}) {
   const [confirm,setConfirm]=useState(false);
   return (
     <div style={S.eRow}>
@@ -307,30 +406,26 @@ function EventRow({event, onDelete}) {
 
 // ─── Calendar ─────────────────────────────────────────────────────────────────
 function CalView({events}) {
-  const now = new Date();
-  const [cur, setCur] = useState({y:now.getFullYear(),m:now.getMonth()});
-  const [sel, setSel] = useState(null);
-  const {y,m} = cur;
-  const firstDay = new Date(y,m,1).getDay();
-  const days = new Date(y,m+1,0).getDate();
-  const monthLabel = new Intl.DateTimeFormat("en-US",{month:"long",year:"numeric"}).format(new Date(y,m));
-
+  const now=new Date();
+  const [cur,setCur]=useState({y:now.getFullYear(),m:now.getMonth()});
+  const [sel,setSel]=useState(null);
+  const{y,m}=cur;
+  const firstDay=new Date(y,m,1).getDay();
+  const days=new Date(y,m+1,0).getDate();
+  const monthLabel=new Intl.DateTimeFormat("en-US",{month:"long",year:"numeric"}).format(new Date(y,m));
   const map={};
   events.forEach(e=>{
     const d=new Date(e.timestamp);
     if(d.getFullYear()===y&&d.getMonth()===m){
       const k=d.getDate();
       if(!map[k]) map[k]={poop:0,pee:0,evs:[]};
-      map[k][e.type]++; map[k].evs.push(e);
+      map[k][e.type]++;map[k].evs.push(e);
     }
   });
-
   const cells=[];
   for(let i=0;i<firstDay;i++) cells.push(null);
   for(let d=1;d<=days;d++) cells.push(d);
-
-  const selEvs = sel&&map[sel]?map[sel].evs.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp)):[];
-
+  const selEvs=sel&&map[sel]?map[sel].evs.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp)):[];
   return (
     <div style={{padding:16}}>
       <div style={S.calNav}>
@@ -370,7 +465,7 @@ function CalView({events}) {
               <div key={ev.id} style={{display:"flex",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #faf0e4"}}>
                 <span style={{fontSize:18}}>{ev.type==="poop"?"💩":"💧"}</span>
                 <span style={{fontSize:14,color:"#2d1f14",marginLeft:8}}>{fmt(new Date(ev.timestamp))}</span>
-                {ev.note&&<span style={S.eNote}>{ev.note}</span>}
+                {ev.note&&<span style={{color:"#9e8c79",fontStyle:"italic",fontSize:13,marginLeft:6}}>{ev.note}</span>}
                 <span style={{fontSize:12,color:"#b0a090",marginLeft:"auto"}}>by {ev.logged_by}</span>
               </div>
             ))}
@@ -381,7 +476,7 @@ function CalView({events}) {
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
-function StatsView({events,catName}) {
+function StatsView({events,catName,health}) {
   const now=new Date();
   const cnt=(days,type)=>events.filter(e=>e.type===type&&(now-new Date(e.timestamp))/(1000*60*60*24)<=days).length;
   const avg=(type)=>{
@@ -390,8 +485,6 @@ function StatsView({events,catName}) {
     const old=new Date(t[t.length-1].timestamp);
     return (t.length/Math.max(1,(now-old)/(1000*60*60*24))).toFixed(1);
   };
-  const uc={};
-  events.forEach(e=>{uc[e.logged_by]=(uc[e.logged_by]||0)+1;});
   return (
     <div style={{padding:20}}>
       <h2 style={S.statsTitle}>{catName}'s Overview</h2>
@@ -400,29 +493,37 @@ function StatsView({events,catName}) {
           <div key={l} style={S.sCard}><div style={{fontSize:28}}>{e}</div><div style={S.sVal}>{v}</div><div style={S.sLbl}>{l}</div></div>
         ))}
       </div>
-      <div style={S.secTitle}>Who's logging?</div>
-      {Object.entries(uc).sort((a,b)=>b[1]-a[1]).map(([u,c])=>(
-        <div key={u} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-          <span style={{width:80,fontSize:14,fontWeight:"bold",color:"#2d1f14"}}>{u}</span>
-          <div style={{flex:1,height:10,background:"#f0e6d3",borderRadius:5,overflow:"hidden"}}>
-            <div style={{height:"100%",background:"linear-gradient(90deg,#ff9a3c,#ff6b6b)",borderRadius:5,width:`${Math.min(100,(c/events.length)*100)}%`}}/>
-          </div>
-          <span style={{fontSize:13,color:"#9e8c79",width:55,textAlign:"right"}}>{c} logs</span>
-        </div>
-      ))}
-      <div style={S.secTitle}>Healthy ranges</div>
+
+      <div style={S.secTitle}>Health Breakdown</div>
       <div style={S.tip}>
-        <p>🟢 <b>Poop:</b> 1–2× per day</p>
-        <p>🟢 <b>Pee:</b> 2–4× per day</p>
-        <p>🔴 No poop in 48h or pee in 24h? See a vet.</p>
+        {[
+          {label:"Poop frequency",value:health.poopCount,ideal:"7–14 per week",ok:health.poopCount>=7&&health.poopCount<=14},
+          {label:"Pee frequency",value:health.peeCount,ideal:"14–28 per week",ok:health.peeCount>=14&&health.peeCount<=28},
+          {label:"Last poop",value:health.hoursSincePoop<999?`${Math.round(health.hoursSincePoop)}h ago`:"No data",ideal:"Within 48h",ok:health.hoursSincePoop<48},
+          {label:"Last pee",value:health.hoursSincePee<999?`${Math.round(health.hoursSincePee)}h ago`:"No data",ideal:"Within 24h",ok:health.hoursSincePee<24},
+        ].map(r=>(
+          <div key={r.label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid #f0e6d3"}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:"bold",color:"#2d1f14"}}>{r.label}</div>
+              <div style={{fontSize:11,color:"#9e8c79"}}>Ideal: {r.ideal}</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:13,fontWeight:"bold",color:"#2d1f14"}}>{r.value}</span>
+              <span style={{fontSize:16}}>{r.ok?"✅":"⚠️"}</span>
+            </div>
+          </div>
+        ))}
       </div>
+
+      <div style={S.secTitle}>💩 Poop Cleaner Rankings</div>
+      <PoopLeaderboard events={events}/>
     </div>
   );
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 function SettingsView({catName,username,onUpdate}) {
-  const [u,setU]=useState(username); const [c,setC]=useState(catName); const [saved,setSaved]=useState(false);
+  const [u,setU]=useState(username);const [c,setC]=useState(catName);const [saved,setSaved]=useState(false);
   return (
     <div style={{padding:20}}>
       <h2 style={S.statsTitle}>Settings</h2>
@@ -434,14 +535,14 @@ function SettingsView({catName,username,onUpdate}) {
         {saved?"Saved ✓":"Save Changes"}</button>
       <div style={S.secTitle}>Real-time sync</div>
       <div style={S.tip}>
-        <p>✅ This version uses <b>Supabase</b> for real-time sync. Any poop or pee logged by you or your partner appears instantly for everyone.</p>
+        <p>✅ Powered by <b>Supabase</b> — logs sync instantly between all users.</p>
         <p style={{marginTop:8}}>📱 <b>Add to Home Screen:</b> In Safari tap Share → "Add to Home Screen". In Chrome tap menu → "Add to Home Screen".</p>
       </div>
     </div>
   );
 }
 
-function Stat({emoji,label,value,urgent}) {
+function StatItem({emoji,label,value,urgent}) {
   return (
     <div style={S.statItem}>
       <span style={{fontSize:20}}>{emoji}</span>
@@ -452,7 +553,7 @@ function Stat({emoji,label,value,urgent}) {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const S = {
+const S={
   app:{fontFamily:"Georgia,serif",background:"#fef9f0",minHeight:"100vh",maxWidth:480,margin:"0 auto",paddingBottom:40},
   header:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",padding:"14px 20px",boxShadow:"0 2px 12px rgba(255,107,107,.3)"},
   hInner:{display:"flex",alignItems:"center",justifyContent:"space-between"},
@@ -461,15 +562,26 @@ const S = {
   catLabel:{fontSize:12,color:"rgba(255,255,255,.8)"},
   userChip:{background:"rgba(255,255,255,.25)",color:"#fff",padding:"4px 12px",borderRadius:20,fontSize:13,display:"flex",alignItems:"center",gap:6},
   dot:{width:7,height:7,borderRadius:"50%",display:"inline-block"},
+  healthWrap:{background:"#fff",padding:"16px 20px 12px",borderBottom:"1px solid #f0e6d3"},
+  healthTop:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10},
+  healthLabel:{fontSize:11,fontWeight:"bold",color:"#9e8c79",textTransform:"uppercase",letterSpacing:"1px",marginBottom:4},
+  healthScore:{fontSize:32,fontWeight:"bold",lineHeight:1},
+  healthMax:{fontSize:14,color:"#9e8c79"},
+  healthBadge:{fontSize:12,fontWeight:"bold",padding:"2px 10px",borderRadius:20},
+  healthDetail:{fontSize:12,color:"#6b5344",marginTop:4,fontStyle:"italic"},
+  barTrack:{height:12,background:"#f0e6d3",borderRadius:6,overflow:"hidden",position:"relative"},
+  barFill:{height:"100%",borderRadius:6,transition:"width .6s ease"},
+  tick:{position:"absolute",top:0,bottom:0,width:2,background:"rgba(255,255,255,.6)"},
+  barLabels:{display:"flex",justifyContent:"space-between",marginTop:4,padding:"0 2px"},
   banner:{display:"flex",background:"#fff",borderBottom:"1px solid #f0e6d3",padding:"10px 0"},
   statItem:{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"0 4px"},
-  div:{width:1,background:"#f0e6d3"},
+  divider:{width:1,background:"#f0e6d3"},
   statLbl:{fontSize:10,color:"#9e8c79",textTransform:"uppercase",letterSpacing:".5px"},
   statVal:{fontSize:13,fontWeight:"bold"},
   logSec:{padding:"20px 20px 14px",background:"#fef9f0"},
   prompt:{textAlign:"center",color:"#6b5344",fontSize:14,margin:"0 0 12px",fontStyle:"italic"},
   btnRow:{display:"flex",gap:14},
-  logBtn:{flex:1,border:"none",borderRadius:18,padding:"18px 0",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,boxShadow:"0 4px 16px rgba(0,0,0,.1)"},
+  logBtn:{flex:1,border:"none",borderRadius:18,padding:"18px 0",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,boxShadow:"0 4px 16px rgba(0,0,0,.1)",transition:"transform .1s"},
   poopBtn:{background:"linear-gradient(135deg,#8B4513,#a0522d)"},
   peeBtn:{background:"linear-gradient(135deg,#f0c030,#f5a623)"},
   btnLbl:{color:"#fff",fontWeight:"bold",fontSize:15},
@@ -484,7 +596,7 @@ const S = {
   cancelBtn:{flex:1,border:"1.5px solid #e8d5c0",borderRadius:12,padding:"12px 0",fontSize:15,background:"#fef9f0",cursor:"pointer",color:"#9e8c79"},
   confirmBtn:{flex:2,border:"none",borderRadius:12,padding:"12px 0",fontSize:15,background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",fontWeight:"bold",cursor:"pointer"},
   nav:{display:"flex",background:"#fff",borderTop:"1px solid #f0e6d3",borderBottom:"1px solid #f0e6d3"},
-  navBtn:{flex:1,border:"none",background:"transparent",padding:"11px 0",cursor:"pointer",fontSize:12,color:"#9e8c79"},
+  navBtn:{flex:1,border:"none",background:"transparent",padding:"11px 0",cursor:"pointer",fontSize:12,color:"#9e8c79",fontFamily:"Georgia,serif"},
   navOn:{color:"#ff6b6b",borderBottom:"2px solid #ff6b6b",fontWeight:"bold"},
   content:{paddingBottom:20},
   dateHdr:{padding:"10px 20px 6px",fontSize:11,fontWeight:"bold",color:"#9e8c79",textTransform:"uppercase",letterSpacing:"1px",background:"#fef3e2"},
@@ -514,12 +626,17 @@ const S = {
   sLbl:{fontSize:12,color:"#9e8c79",marginTop:2},
   secTitle:{fontSize:12,fontWeight:"bold",color:"#9e8c79",textTransform:"uppercase",letterSpacing:"1px",marginBottom:10,marginTop:20},
   tip:{background:"#fff",borderRadius:14,padding:"14px 16px",fontSize:13,lineHeight:1.7,color:"#4a3728",boxShadow:"0 2px 8px rgba(0,0,0,.05)"},
-  saveBtn:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",border:"none",borderRadius:12,padding:"12px 24px",cursor:"pointer",fontWeight:"bold",fontSize:15,marginBottom:8},
-  setupWrap:{minHeight:"100vh",background:"linear-gradient(160deg,#ff9a3c22,#ff6b6b11)",display:"flex",alignItems:"center",justifyContent:"center",padding:20},
+  saveBtn:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",border:"none",borderRadius:12,padding:"12px 24px",cursor:"pointer",fontWeight:"bold",fontSize:15,fontFamily:"Georgia,serif",marginBottom:8},
+  lbRow:{background:"#fff",borderRadius:16,padding:"14px 16px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 2px 8px rgba(0,0,0,.06)"},
+  lbFirst:{background:"linear-gradient(135deg,#fff8f0,#fff0e8)",border:"2px solid #ff9a3c",boxShadow:"0 4px 16px rgba(255,154,60,.2)"},
+  lbCrown:{fontSize:11,fontWeight:"bold",color:"#ff6b6b",background:"#fff0f0",padding:"2px 8px",borderRadius:20},
+  lbBarTrack:{height:8,background:"#f0e6d3",borderRadius:4,overflow:"hidden"},
+  lbBarFill:{height:"100%",borderRadius:4,transition:"width .5s ease"},
+  setupWrap:{minHeight:"100vh",background:"linear-gradient(160deg,#ff9a3c22,#ff6b6b11)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:"Georgia,serif"},
   setupCard:{background:"#fff",borderRadius:24,padding:"36px 28px",maxWidth:380,width:"100%",boxShadow:"0 8px 40px rgba(255,107,107,.15)",textAlign:"center"},
   setupTitle:{fontSize:32,fontWeight:"bold",color:"#ff6b6b",margin:"0 0 6px"},
   setupSub:{color:"#9e8c79",fontSize:15,marginBottom:28},
-  setupBtn:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",border:"none",borderRadius:14,padding:"14px 0",width:"100%",cursor:"pointer",fontWeight:"bold",fontSize:16,marginTop:8},
+  setupBtn:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",border:"none",borderRadius:14,padding:"14px 0",width:"100%",cursor:"pointer",fontWeight:"bold",fontSize:16,fontFamily:"Georgia,serif",marginTop:8},
   setupNote:{fontSize:12,color:"#b0a090",marginTop:18,lineHeight:1.6},
   lbl:{display:"block",fontSize:12,color:"#9e8c79",fontWeight:"bold",textTransform:"uppercase",letterSpacing:".5px",marginBottom:6},
   input:{width:"100%",border:"1.5px solid #e8d5c0",borderRadius:10,padding:"10px 14px",fontSize:15,background:"#fff",fontFamily:"Georgia,serif",outline:"none",boxSizing:"border-box"},
