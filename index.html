@@ -1,3 +1,4 @@
+
   <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -20,219 +21,271 @@
 <div id="root"></div>
 <script type="text/babel">
 
-// ─── CONFIG — paste your Supabase values here ─────────────────────────────────
+// ─── PASTE YOUR SUPABASE VALUES HERE ──────────────────────────────────────────
 const SUPABASE_URL = "https://pjhrvzybehrvopagbdtb.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_6_aPywTif6YDsodDeusPow_rd4DwkX1";
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CAT_NAME_KEY = "kittylog_cat";
+const CAT_KEY      = "kittylog_cat";
 const USERNAME_KEY = "kittylog_user";
+const ROOM_KEY     = "kittylog_room";
 
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const { useState, useEffect, useCallback } = React;
 
 const QUICK_OFFSETS = [
-  { label:"Now", minutes:0 },
-  { label:"30m ago", minutes:30 },
-  { label:"1h ago", minutes:60 },
-  { label:"1.5h ago", minutes:90 },
-  { label:"2h ago", minutes:120 },
-  { label:"3h ago", minutes:180 },
+  { label:"Now",     minutes:0   },
+  { label:"30m ago", minutes:30  },
+  { label:"1h ago",  minutes:60  },
+  { label:"1.5h ago",minutes:90  },
+  { label:"2h ago",  minutes:120 },
+  { label:"3h ago",  minutes:180 },
 ];
 
-function fmt(date) {
-  return new Intl.DateTimeFormat("en-US",{hour:"numeric",minute:"2-digit",hour12:true}).format(date);
+function fmt(d) {
+  return new Intl.DateTimeFormat("en-US",{hour:"numeric",minute:"2-digit",hour12:true}).format(d);
 }
-function fmtDate(date) {
+function fmtDate(d) {
   const t=new Date(), y=new Date(t); y.setDate(y.getDate()-1);
-  if(date.toDateString()===t.toDateString()) return "Today";
-  if(date.toDateString()===y.toDateString()) return "Yesterday";
-  return new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric"}).format(date);
+  if (d.toDateString()===t.toDateString()) return "Today";
+  if (d.toDateString()===y.toDateString()) return "Yesterday";
+  return new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric"}).format(d);
 }
-function timeSince(date) {
-  const s=Math.floor((new Date()-date)/1000);
-  if(s<60) return "just now";
-  const m=Math.floor(s/60); if(m<60) return `${m}m ago`;
-  const h=Math.floor(m/60); if(h<24) return `${h}h ago`;
+function timeSince(d) {
+  const s=Math.floor((new Date()-d)/1000);
+  if (s<60) return "just now";
+  const m=Math.floor(s/60); if (m<60) return `${m}m ago`;
+  const h=Math.floor(m/60); if (h<24) return `${h}h ago`;
   return `${Math.floor(h/24)}d ago`;
 }
-function toLocal(date) {
-  const d=new Date(date);
-  d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
-  return d.toISOString().slice(0,16);
+function toLocal(d) {
+  const x=new Date(d); x.setMinutes(x.getMinutes()-x.getTimezoneOffset());
+  return x.toISOString().slice(0,16);
 }
-function groupByDate(events) {
+function groupByDate(evs) {
   const g={};
-  events.forEach(e=>{
-    const k=new Date(e.timestamp).toDateString();
-    if(!g[k]) g[k]=[];
-    g[k].push(e);
-  });
+  evs.forEach(e=>{ const k=new Date(e.timestamp).toDateString(); if(!g[k])g[k]=[]; g[k].push(e); });
   return g;
 }
+function genCode() { return Math.random().toString(36).slice(2,8).toUpperCase(); }
 
-// ─── Health Score ─────────────────────────────────────────────────────────────
 function calcHealth(events) {
   const now=new Date();
-  const last7=events.filter(e=>(now-new Date(e.timestamp))/(1000*60*60*24)<=7);
-  const poopCount=last7.filter(e=>e.type==="poop").length;
-  const peeCount=last7.filter(e=>e.type==="pee").length;
-
-  let poopScore=0;
-  if(poopCount>=7&&poopCount<=14) poopScore=50;
-  else if(poopCount>=5&&poopCount<=16) poopScore=38;
-  else if(poopCount>=3&&poopCount<=18) poopScore=25;
-  else if(poopCount>0) poopScore=12;
-
-  let peeScore=0;
-  if(peeCount>=14&&peeCount<=28) peeScore=50;
-  else if(peeCount>=10&&peeCount<=32) peeScore=38;
-  else if(peeCount>=6&&peeCount<=36) peeScore=25;
-  else if(peeCount>0) peeScore=12;
-
-  const lastPoop=events.find(e=>e.type==="poop");
-  const lastPee=events.find(e=>e.type==="pee");
-  const hoursSincePoop=lastPoop?(now-new Date(lastPoop.timestamp))/(1000*60*60):999;
-  const hoursSincePee=lastPee?(now-new Date(lastPee.timestamp))/(1000*60*60):999;
-
-  let total=poopScore+peeScore;
-  if(hoursSincePoop>48||hoursSincePee>24) total=Math.min(total,40);
-  if(events.length===0) total=0;
-
+  const oldest=events.length ? new Date(events[events.length-1].timestamp) : now;
+  const daysOfData=Math.max(1,(now-oldest)/(1000*60*60*24));
+  const mf=Math.min(1,daysOfData/7);
+  const last7=events.filter(e=>e.type!=="litter"&&(now-new Date(e.timestamp))/(1000*60*60*24)<=7);
+  const pc=last7.filter(e=>e.type==="poop").length;
+  const pec=last7.filter(e=>e.type==="pee").length;
+  const ipMin=Math.round(5*mf), ipMax=Math.round(16*mf);
+  const ieMin=Math.round(8*mf), ieMax=Math.round(32*mf);
+  let ps=0;
+  if (pc>=ipMin&&pc<=ipMax) ps=50;
+  else if (pc>0&&pc<=ipMax+4) ps=35;
+  else if (pc>0) ps=18;
+  let es=0;
+  if (pec>=ieMin&&pec<=ieMax) es=50;
+  else if (pec>0&&pec<=ieMax+6) es=35;
+  else if (pec>0) es=18;
+  const lp=events.find(e=>e.type==="poop");
+  const le=events.find(e=>e.type==="pee");
+  const hp=lp?(now-new Date(lp.timestamp))/(1000*60*60):999;
+  const he=le?(now-new Date(le.timestamp))/(1000*60*60):999;
+  let total=ps+es;
+  if (daysOfData>=2&&(hp>48||he>24)) total=Math.min(total,45);
+  if (events.filter(e=>e.type!=="litter").length===0) total=0;
+  if (daysOfData<3&&events.filter(e=>e.type!=="litter").length>0) total=Math.max(total,50);
   let label,color,emoji,detail;
-  if(total>=90){label="Excellent";color="#22c55e";emoji="😸";detail="Perfect bathroom habits!";}
-  else if(total>=70){label="Good";color="#84cc16";emoji="😺";detail="Healthy & regular";}
-  else if(total>=50){label="Fair";color="#f59e0b";emoji="🙀";detail="Slightly off schedule";}
-  else if(total>=25){label="Poor";color="#ef4444";emoji="😿";detail="Needs attention";}
-  else if(total>0){label="Critical";color="#dc2626";emoji="🚨";detail="See a vet soon!";}
-  else{label="No Data";color="#9e8c79";emoji="🐱";detail="Start logging to track health";}
-
-  return{score:total,label,color,emoji,detail,poopCount,peeCount,hoursSincePoop,hoursSincePee};
+  if (total>=85)      { label="Excellent"; color="#22c55e"; emoji="😸"; detail="Perfect bathroom habits!"; }
+  else if (total>=65) { label="Good";      color="#84cc16"; emoji="😺"; detail="Healthy & regular"; }
+  else if (total>=45) { label="Fair";      color="#f59e0b"; emoji="🙀"; detail="Slightly off schedule"; }
+  else if (total>=20) { label="Poor";      color="#ef4444"; emoji="😿"; detail="Needs attention"; }
+  else if (total>0)   { label="Critical";  color="#dc2626"; emoji="🚨"; detail="See a vet soon!"; }
+  else                { label="No Data";   color="#9e8c79"; emoji="🐱"; detail="Start logging to track health"; }
+  return { score:total, label, color, emoji, detail, poopCount:pc, peeCount:pec,
+           hrsPoop:hp, hrsPee:he, daysOfData, idealPoopMin:ipMin, idealPoopMax:ipMax,
+           idealPeeMin:ieMin, idealPeeMax:ieMax };
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 function App() {
-  const [events,setEvents]=useState([]);
-  const [catName,setCatName]=useState(localStorage.getItem(CAT_NAME_KEY)||"Whiskers");
-  const [username,setUsername]=useState(localStorage.getItem(USERNAME_KEY)||"");
-  const [showSetup,setShowSetup]=useState(!localStorage.getItem(USERNAME_KEY));
-  const [view,setView]=useState("log");
-  const [logForm,setLogForm]=useState(null);
-  const [pulse,setPulse]=useState(null);
-  const [status,setStatus]=useState("loading");
-  const [ticker,setTicker]=useState(0);
+  const [events,   setEvents]   = useState([]);
+  const [catName,  setCatName]  = useState(localStorage.getItem(CAT_KEY)||"");
+  const [username, setUsername] = useState(localStorage.getItem(USERNAME_KEY)||"");
+  const [roomCode, setRoomCode] = useState(localStorage.getItem(ROOM_KEY)||"");
+  const [screen,   setScreen]   = useState("loading");
+  const [view,     setView]     = useState("log");
+  const [logForm,  setLogForm]  = useState(null);
+  const [pulse,    setPulse]    = useState(null);
+  const [status,   setStatus]   = useState("loading");
+  const [reminder, setReminder] = useState(null);
+  const [tooltip,  setTooltip]  = useState(false);
+  const [ticker,   setTicker]   = useState(0);
 
-  const loadEvents=useCallback(async()=>{
-    const{data,error}=await db.from("events").select("*").order("timestamp",{ascending:false}).limit(500);
-    if(error){setStatus("error");return;}
+  const loadEvents = useCallback(async (room) => {
+    const { data, error } = await db.from("events").select("*")
+      .eq("room_code", room).order("timestamp",{ascending:false}).limit(500);
+    if (error) { setStatus("error"); return; }
     setEvents(data||[]);
     setStatus("ok");
-  },[]);
+  }, []);
 
-  useEffect(()=>{loadEvents();},[loadEvents]);
+  useEffect(() => {
+    const r=localStorage.getItem(ROOM_KEY);
+    const u=localStorage.getItem(USERNAME_KEY);
+    const c=localStorage.getItem(CAT_KEY);
+    if (r&&u) { setRoomCode(r); setUsername(u); setCatName(c||"Cat"); setScreen("app"); loadEvents(r); }
+    else if (r) { setRoomCode(r); setScreen("setup"); }
+    else setScreen("room");
+  }, [loadEvents]);
 
-  useEffect(()=>{
-    const ch=db.channel("events-rt")
-      .on("postgres_changes",{event:"*",schema:"public",table:"events"},()=>loadEvents())
+  useEffect(() => {
+    if (!roomCode||screen!=="app") return;
+    const ch = db.channel("rt-"+roomCode)
+      .on("postgres_changes",{event:"*",schema:"public",table:"events"},()=>loadEvents(roomCode))
       .subscribe();
-    return()=>db.removeChannel(ch);
-  },[loadEvents]);
+    return () => db.removeChannel(ch);
+  }, [roomCode, screen, loadEvents]);
 
-  useEffect(()=>{const id=setInterval(()=>setTicker(t=>t+1),30000);return()=>clearInterval(id);},[]);
+  useEffect(() => {
+    const id=setInterval(()=>setTicker(t=>t+1),30000); return ()=>clearInterval(id);
+  }, []);
 
-  const addEvent=async()=>{
-    if(!logForm) return;
-    const ts=logForm.useCustom?new Date(logForm.customTime).toISOString():new Date().toISOString();
-    const ev={
-      id:`${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      type:logForm.type,
-      timestamp:ts,
-      logged_by:username,
-      note:logForm.note.trim()||null,
-      cat_name:catName,
+  const joinRoom = (code) => {
+    const rc=code.toUpperCase().trim(); if (!rc) return;
+    localStorage.setItem(ROOM_KEY, rc); setRoomCode(rc); setScreen("setup");
+  };
+
+  const completeSetup = (u, c) => {
+    localStorage.setItem(USERNAME_KEY, u); localStorage.setItem(CAT_KEY, c);
+    setUsername(u); setCatName(c); setScreen("app");
+    loadEvents(localStorage.getItem(ROOM_KEY));
+  };
+
+  const openForm   = (type) => setLogForm({type,note:"",customTime:toLocal(new Date()),useCustom:false,quickOffset:0});
+  const applyOffset = (mins) => {
+    const t=new Date(Date.now()-mins*60000);
+    setLogForm(f=>({...f,quickOffset:mins,customTime:toLocal(t),useCustom:mins!==0}));
+  };
+
+  const addEvent = async () => {
+    if (!logForm) return;
+    const ts = logForm.useCustom ? new Date(logForm.customTime).toISOString() : new Date().toISOString();
+    const ev = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      type: logForm.type, timestamp: ts,
+      logged_by: username, note: logForm.note.trim()||null,
+      cat_name: catName, room_code: roomCode,
     };
-    const{error}=await db.from("events").insert(ev);
-    if(error){alert("Save failed: "+error.message);return;}
-    setPulse(logForm.type);setTimeout(()=>setPulse(null),700);
+    const { error } = await db.from("events").insert(ev);
+    if (error) { alert("Save failed: "+error.message); return; }
+    setPulse(logForm.type); setTimeout(()=>setPulse(null),600);
+    if (logForm.type==="poop"||logForm.type==="pee") {
+      setReminder({type:logForm.type}); setTimeout(()=>setReminder(null),6000);
+    }
     setLogForm(null);
   };
 
-  const deleteEvent=async(id)=>{
+  const deleteEvent = async (id) => {
     await db.from("events").delete().eq("id",id);
     setEvents(ev=>ev.filter(e=>e.id!==id));
   };
 
-  const completeSetup=(u,c)=>{
-    localStorage.setItem(USERNAME_KEY,u);
-    localStorage.setItem(CAT_NAME_KEY,c);
-    setUsername(u);setCatName(c);setShowSetup(false);
+  const leaveRoom = () => {
+    [ROOM_KEY,USERNAME_KEY,CAT_KEY].forEach(k=>localStorage.removeItem(k));
+    setRoomCode(""); setUsername(""); setCatName(""); setEvents([]); setScreen("room");
   };
 
-  const openForm=(type)=>setLogForm({type,note:"",customTime:toLocal(new Date()),useCustom:false,quickOffset:0});
-  const applyOffset=(minutes)=>{
-    const t=new Date(Date.now()-minutes*60000);
-    setLogForm(f=>({...f,quickOffset:minutes,customTime:toLocal(t),useCustom:minutes!==0}));
+  const now   = new Date();
+  const last7 = events.filter(e=>e.type!=="litter"&&(now-new Date(e.timestamp))/(1000*60*60*24)<=7);
+  const stats = {
+    lastPoop:   events.find(e=>e.type==="poop"),
+    lastPee:    events.find(e=>e.type==="pee"),
+    lastLitter: events.find(e=>e.type==="litter"),
+    poops: last7.filter(e=>e.type==="poop").length,
+    pees:  last7.filter(e=>e.type==="pee").length,
   };
+  const health = calcHealth(events);
 
-  const now=new Date();
-  const last7=events.filter(e=>(now-new Date(e.timestamp))/(1000*60*60*24)<=7);
-  const stats={
-    poops:last7.filter(e=>e.type==="poop").length,
-    pees:last7.filter(e=>e.type==="pee").length,
-    lastPoop:events.find(e=>e.type==="poop"),
-    lastPee:events.find(e=>e.type==="pee"),
-  };
-  const health=calcHealth(events);
-
-  if(showSetup) return <Setup onDone={completeSetup} defaultCat={catName}/>;
+  if (screen==="loading") return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontSize:40}}>🐾</div>;
+  if (screen==="room")    return <RoomScreen onJoin={joinRoom}/>;
+  if (screen==="setup")   return <SetupScreen onDone={completeSetup} roomCode={roomCode}/>;
 
   return (
     <div style={S.app}>
+      {/* Header */}
       <header style={S.header}>
         <div style={S.hInner}>
           <div style={S.hLeft}>
-            <span style={{fontSize:26}}>🐾</span>
-            <div><div style={S.appName}>KittyLog</div><div style={S.catLabel}>{catName}'s diary</div></div>
+            <span style={{fontSize:24}}>🐾</span>
+            <div>
+              <div style={S.appName}>KittyLog</div>
+              <div style={S.catLabel}>{catName} · Room {roomCode}</div>
+            </div>
           </div>
           <div style={S.userChip}>
-            <span style={{...S.dot,background:status==="ok"?"#7fff7f":status==="error"?"#ff6b6b":"#ffd700"}}/>
+            <span style={{...S.dot, background:status==="ok"?"#7fff7f":status==="error"?"#ff6b6b":"#ffd700"}}/>
             {username}
           </div>
         </div>
       </header>
 
-      <HealthMeter health={health} catName={catName}/>
+      {/* Reminder */}
+      {reminder && (
+        <div style={S.reminderBanner}>
+          <span style={{fontSize:20}}>{reminder.type==="poop"?"🧻":"💧"}</span>
+          <span style={S.reminderText}>
+            {reminder.type==="poop"
+              ? `Remember to check and clean ${catName}'s butt! 🐾`
+              : `Remember to clean ${catName}'s pee pee area if needed! 💧`}
+          </span>
+          <button style={S.reminderClose} onClick={()=>setReminder(null)}>✕</button>
+        </div>
+      )}
 
+      {/* Health Meter */}
+      <HealthMeter health={health} catName={catName} tooltip={tooltip} setTooltip={setTooltip}/>
+
+      {/* Status Banner */}
       <div style={S.banner}>
-        <StatItem emoji="💩" label="Last poop" value={stats.lastPoop?timeSince(new Date(stats.lastPoop.timestamp)):"None yet"} urgent={stats.lastPoop&&(now-new Date(stats.lastPoop.timestamp))>1000*60*60*36}/>
-        <div style={S.divider}/>
-        <StatItem emoji="💧" label="Last pee" value={stats.lastPee?timeSince(new Date(stats.lastPee.timestamp)):"None yet"} urgent={stats.lastPee&&(now-new Date(stats.lastPee.timestamp))>1000*60*60*18}/>
-        <div style={S.divider}/>
-        <StatItem emoji="📅" label="This week" value={`${stats.poops}💩 ${stats.pees}💧`}/>
+        <SItem emoji="💩" label="Last poop"  value={stats.lastPoop   ? timeSince(new Date(stats.lastPoop.timestamp))   : "None"} urgent={stats.lastPoop   && (now-new Date(stats.lastPoop.timestamp))>1000*60*60*36}/>
+        <div style={S.div}/>
+        <SItem emoji="💧" label="Last pee"   value={stats.lastPee    ? timeSince(new Date(stats.lastPee.timestamp))    : "None"} urgent={stats.lastPee    && (now-new Date(stats.lastPee.timestamp))>1000*60*60*18}/>
+        <div style={S.div}/>
+        <SItem emoji="🪣" label="Last clean" value={stats.lastLitter ? timeSince(new Date(stats.lastLitter.timestamp)) : "None"} urgent={stats.lastLitter && (now-new Date(stats.lastLitter.timestamp))>1000*60*60*72}/>
       </div>
 
+      {/* Log Buttons */}
       <div style={S.logSec}>
         <p style={S.prompt}>What did {catName} do?</p>
         <div style={S.btnRow}>
-          <button style={{...S.logBtn,...S.poopBtn,transform:pulse==="poop"?"scale(.93)":"scale(1)"}} onClick={()=>openForm("poop")}>
-            <span style={{fontSize:36}}>💩</span><span style={S.btnLbl}>Pooped</span>
+          <button style={{...S.logBtn,...S.poopBtn, transform:pulse==="poop"?"scale(.93)":"scale(1)"}} onClick={()=>openForm("poop")}>
+            <span style={{fontSize:30}}>💩</span><span style={S.btnLbl}>Pooped</span>
           </button>
-          <button style={{...S.logBtn,...S.peeBtn,transform:pulse==="pee"?"scale(.93)":"scale(1)"}} onClick={()=>openForm("pee")}>
-            <span style={{fontSize:36}}>💧</span><span style={S.btnLbl}>Peed</span>
+          <button style={{...S.logBtn,...S.peeBtn,  transform:pulse==="pee" ?"scale(.93)":"scale(1)"}} onClick={()=>openForm("pee")}>
+            <span style={{fontSize:30}}>💧</span><span style={S.btnLbl}>Peed</span>
+          </button>
+          <button style={{...S.logBtn,...S.litBtn,  transform:pulse==="litter"?"scale(.93)":"scale(1)"}} onClick={()=>openForm("litter")}>
+            <span style={{fontSize:30}}>🪣</span><span style={S.btnLbl}>Cleaned Litter</span>
           </button>
         </div>
       </div>
 
-      {logForm&&(
+      {/* Log Form Modal */}
+      {logForm && (
         <div style={S.backdrop} onClick={()=>setLogForm(null)}>
           <div style={S.modal} onClick={e=>e.stopPropagation()}>
-            <div style={S.modalTitle}>{logForm.type==="poop"?"💩 Log Poop":"💧 Log Pee"}</div>
+            <div style={S.modalTitle}>
+              {logForm.type==="poop"?"💩 Log Poop":logForm.type==="pee"?"💧 Log Pee":"🪣 Log Litter Clean"}
+            </div>
+            {logForm.type==="litter" && <div style={S.litNote}>Records a full kitty litter removal & clean.</div>}
             <div style={S.fSec}>
               <label style={S.lbl}>Quick time</label>
               <div style={S.quickRow}>
                 {QUICK_OFFSETS.map(o=>(
-                  <button key={o.minutes} style={{...S.qBtn,...(logForm.quickOffset===o.minutes?S.qBtnOn:{})}}
+                  <button key={o.minutes}
+                    style={{...S.qBtn,...(logForm.quickOffset===o.minutes?S.qBtnOn:{})}}
                     onClick={()=>applyOffset(o.minutes)}>{o.label}</button>
                 ))}
               </div>
@@ -244,79 +297,145 @@ function App() {
             </div>
             <div style={S.fSec}>
               <label style={S.lbl}>Note (optional)</label>
-              <input style={S.input} placeholder='e.g. "solid", "runny", "outside box"…'
+              <input style={S.input}
+                placeholder={logForm.type==="litter"?'"changed sand", "deep clean"…':'"solid","runny","outside box"…'}
                 value={logForm.note} onChange={e=>setLogForm(f=>({...f,note:e.target.value}))}/>
             </div>
             <div style={S.mBtns}>
               <button style={S.cancelBtn} onClick={()=>setLogForm(null)}>Cancel</button>
-              <button style={S.confirmBtn} onClick={addEvent}>Log {logForm.type==="poop"?"💩":"💧"}</button>
+              <button style={S.confirmBtn} onClick={addEvent}>
+                Log {logForm.type==="poop"?"💩":logForm.type==="pee"?"💧":"🪣"}
+              </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Health Tooltip Modal */}
+      {tooltip && (
+        <div style={S.backdrop} onClick={()=>setTooltip(false)}>
+          <div style={S.modal} onClick={e=>e.stopPropagation()}>
+            <div style={S.modalTitle}>📊 How the health score works</div>
+            <div style={{fontSize:13,color:"#4a3728",lineHeight:1.8}}>
+              <p>The score is out of <b>100</b> based on two factors:</p><br/>
+              <p>💩 <b>Poop regularity</b> (50 pts) — Ideal: 1–2× per day</p><br/>
+              <p>💧 <b>Pee regularity</b> (50 pts) — Ideal: 2–4× per day</p><br/>
+              <div style={{background:"#fff8f0",borderRadius:10,padding:"10px 12px",border:"1px solid #f0e6d3"}}>
+                <p>⏳ <b>New user adjustment</b></p>
+                <p style={{marginTop:4}}>If you've logged less than 7 days of data, the score adjusts automatically so your cat isn't penalized for limited history. It gets more accurate over time.</p>
+              </div><br/>
+              <p>⚠️ A lower score only reflects the <b>logging pattern</b> — not necessarily that your cat is unwell. Always consult a vet if concerned.</p>
+            </div>
+            <button style={{...S.confirmBtn,marginTop:16}} onClick={()=>setTooltip(false)}>Got it!</button>
+          </div>
+        </div>
+      )}
+
+      {/* Nav */}
       <div style={S.nav}>
         {[["log","📋 Log"],["calendar","📅 Cal"],["stats","📊 Stats"],["settings","⚙️"]].map(([v,l])=>(
           <button key={v} style={{...S.navBtn,...(view===v?S.navOn:{})}} onClick={()=>setView(v)}>{l}</button>
         ))}
       </div>
 
+      {/* Views */}
       <div style={S.content}>
-        {view==="log"&&<LogView events={events} onDelete={deleteEvent} catName={catName}/>}
-        {view==="calendar"&&<CalView events={events}/>}
-        {view==="stats"&&<StatsView events={events} catName={catName} health={health}/>}
-        {view==="settings"&&<SettingsView catName={catName} username={username}
-          onUpdate={(u,c)=>{localStorage.setItem(USERNAME_KEY,u);localStorage.setItem(CAT_NAME_KEY,c);setUsername(u);setCatName(c);}}/>}
+        {view==="log"      && <LogView      events={events} onDelete={deleteEvent} catName={catName}/>}
+        {view==="calendar" && <CalView      events={events}/>}
+        {view==="stats"    && <StatsView    events={events} catName={catName} health={health}/>}
+        {view==="settings" && <SettingsView catName={catName} username={username} roomCode={roomCode}
+          onUpdate={(u,c)=>{ localStorage.setItem(USERNAME_KEY,u); localStorage.setItem(CAT_KEY,c); setUsername(u); setCatName(c); }}
+          onLeave={leaveRoom}/>}
       </div>
     </div>
   );
 }
 
-// ─── Setup ────────────────────────────────────────────────────────────────────
-function Setup({onDone,defaultCat}) {
-  const [u,setU]=useState(""); const [c,setC]=useState(defaultCat||"");
+// ─── Room Screen ──────────────────────────────────────────────────────────────
+function RoomScreen({ onJoin }) {
+  const [code,setCode]=useState(""); const [mode,setMode]=useState(null);
   return (
     <div style={S.setupWrap}>
       <div style={S.setupCard}>
         <div style={{fontSize:52}}>🐾</div>
         <h1 style={S.setupTitle}>KittyLog</h1>
         <p style={S.setupSub}>Track your cat's bathroom habits together</p>
-        <div style={{marginBottom:14}}><label style={S.lbl}>Your name</label>
-          <input style={S.input} placeholder="e.g. Alex" value={u} onChange={e=>setU(e.target.value)}/></div>
-        <div style={{marginBottom:14}}><label style={S.lbl}>Cat's name</label>
-          <input style={S.input} placeholder="e.g. Mochi" value={c} onChange={e=>setC(e.target.value)}/></div>
-        <button style={S.setupBtn} onClick={()=>onDone(u.trim()||"You",c.trim()||"Whiskers")}>Let's go! 🐱</button>
-        <p style={S.setupNote}>Share this URL with your partner — all events sync in real-time.</p>
+        {!mode && (
+          <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:8}}>
+            <button style={S.setupBtn} onClick={()=>onJoin(genCode())}>➕ Create a new room</button>
+            <button style={{...S.setupBtn,background:"linear-gradient(135deg,#6366f1,#8b5cf6)"}} onClick={()=>setMode("join")}>🔑 Join existing room</button>
+          </div>
+        )}
+        {mode==="join" && (
+          <div style={{marginTop:16}}>
+            <label style={S.lbl}>Enter room code</label>
+            <input style={{...S.input,textTransform:"uppercase",letterSpacing:4,fontSize:20,textAlign:"center"}}
+              placeholder="ABC123" maxLength={6} value={code} onChange={e=>setCode(e.target.value.toUpperCase())}/>
+            <button style={{...S.setupBtn,marginTop:12}} onClick={()=>onJoin(code)}>Join Room</button>
+            <button style={{...S.setupBtn,marginTop:8,background:"transparent",color:"#9e8c79",boxShadow:"none"}} onClick={()=>setMode(null)}>← Back</button>
+          </div>
+        )}
+        <p style={S.setupNote}>Share your room code with your partner to log together.</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Setup Screen ─────────────────────────────────────────────────────────────
+function SetupScreen({ onDone, roomCode }) {
+  const [u,setU]=useState(""); const [c,setC]=useState("");
+  return (
+    <div style={S.setupWrap}>
+      <div style={S.setupCard}>
+        <div style={{fontSize:52}}>🐾</div>
+        <h1 style={S.setupTitle}>Welcome!</h1>
+        <div style={{background:"#f0f4ff",borderRadius:10,padding:"8px 14px",marginBottom:16,fontSize:13,color:"#6366f1",fontWeight:"bold"}}>
+          Room: {roomCode}
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={S.lbl}>Your name</label>
+          <input style={S.input} placeholder="e.g. Alex" value={u} onChange={e=>setU(e.target.value)}/>
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={S.lbl}>Cat's name</label>
+          <input style={S.input} placeholder="e.g. Boba" value={c} onChange={e=>setC(e.target.value)}/>
+        </div>
+        <button style={S.setupBtn} onClick={()=>onDone(u.trim()||"You", c.trim()||"Cat")}>Let's go! 🐱</button>
+        <p style={S.setupNote}>Share code <b>{roomCode}</b> with your partner so they can join.</p>
       </div>
     </div>
   );
 }
 
 // ─── Health Meter ─────────────────────────────────────────────────────────────
-function HealthMeter({health,catName}) {
-  const{score,label,color,emoji,detail}=health;
-  const g1=score>=70?"#22c55e":score>=50?"#84cc16":score>=25?"#f59e0b":"#ef4444";
-  const g2=score>=70?"#16a34a":score>=50?"#65a30d":score>=25?"#d97706":"#dc2626";
+function HealthMeter({ health, catName, tooltip, setTooltip }) {
+  const { score, label, color, emoji, detail, daysOfData } = health;
+  const g1=score>=65?"#22c55e":score>=45?"#84cc16":score>=20?"#f59e0b":"#ef4444";
+  const g2=score>=65?"#16a34a":score>=45?"#65a30d":score>=20?"#d97706":"#dc2626";
   return (
     <div style={S.healthWrap}>
       <div style={S.healthTop}>
         <div style={{flex:1}}>
-          <div style={S.healthLabel}>{catName}'s Health</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+            <div style={S.healthLabel}>{catName}'s Health</div>
+            <button style={S.tipBtn} onClick={()=>setTooltip(true)}>ℹ️</button>
+          </div>
           <div style={{display:"flex",alignItems:"baseline",gap:6}}>
             <span style={{...S.healthScore,color}}>{score}</span>
             <span style={S.healthMax}>/100</span>
             <span style={{...S.healthBadge,background:color+"22",color}}>{label}</span>
           </div>
           <div style={S.healthDetail}>{detail}</div>
+          {daysOfData<7 && <div style={S.newDataNote}>⏳ Adjusting — {Math.round(daysOfData)} of 7 days logged</div>}
         </div>
-        <div style={{fontSize:44,lineHeight:1}}>{emoji}</div>
+        <div style={{fontSize:42,lineHeight:1}}>{emoji}</div>
       </div>
       <div style={S.barTrack}>
-        <div style={{...S.barFill,width:`${score}%`,background:`linear-gradient(90deg,${g1},${g2})`}}/>
-        {[25,50,70,90].map(t=><div key={t} style={{...S.tick,left:`${t}%`}}/>)}
+        <div style={{...S.barFill, width:`${score}%`, background:`linear-gradient(90deg,${g1},${g2})`}}/>
+        {[20,45,65,85].map(t=><div key={t} style={{...S.tick,left:`${t}%`}}/>)}
       </div>
       <div style={S.barLabels}>
-        <span style={{color:"#dc2626",fontSize:10}}>Critical</span>
+        <span style={{color:"#dc2626",fontSize:10}}>Poor</span>
         <span style={{color:"#f59e0b",fontSize:10}}>Fair</span>
         <span style={{color:"#84cc16",fontSize:10}}>Good</span>
         <span style={{color:"#22c55e",fontSize:10}}>Excellent</span>
@@ -325,18 +444,14 @@ function HealthMeter({health,catName}) {
   );
 }
 
-// ─── Poop Leaderboard ─────────────────────────────────────────────────────────
-function PoopLeaderboard({events}) {
+// ─── Leaderboards ─────────────────────────────────────────────────────────────
+function PoopLeaderboard({ events }) {
   const poops=events.filter(e=>e.type==="poop");
-  const counts={};
-  poops.forEach(e=>{counts[e.logged_by]=(counts[e.logged_by]||0)+1;});
+  const counts={}; poops.forEach(e=>{ const u=e.logged_by||e.loggedBy; counts[u]=(counts[u]||0)+1; });
   const ranked=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
   const total=poops.length;
   const medals=["🥇","🥈","🥉"];
-
-  if(!ranked.length) return (
-    <div style={S.tip}><p style={{textAlign:"center",color:"#9e8c79"}}>No poop logs yet — start logging to see rankings!</p></div>
-  );
+  if (!ranked.length) return <div style={S.tip}><p style={{textAlign:"center",color:"#9e8c79"}}>No poop logs yet!</p></div>;
   return (
     <div style={{display:"flex",flexDirection:"column",gap:10}}>
       {ranked.map(([user,count],i)=>{
@@ -344,131 +459,177 @@ function PoopLeaderboard({events}) {
         const isFirst=i===0;
         return (
           <div key={user} style={{...S.lbRow,...(isFirst?S.lbFirst:{})}}>
-            <div style={{width:36,textAlign:"center"}}>
-              <span style={{fontSize:isFirst?28:20}}>{medals[i]||`#${i+1}`}</span>
-            </div>
+            <div style={{width:34,textAlign:"center"}}><span style={{fontSize:isFirst?26:18}}>{medals[i]||`#${i+1}`}</span></div>
             <div style={{flex:1}}>
               <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                <span style={{fontSize:isFirst?17:15,fontWeight:"bold",color:"#2d1f14"}}>{user}</span>
-                {isFirst&&<span style={S.lbCrown}>👑 Poop Champ</span>}
+                <span style={{fontSize:isFirst?16:14,fontWeight:"bold",color:"#2d1f14"}}>{user}</span>
+                {isFirst && <span style={S.lbCrown}>👑 Poop Champ</span>}
               </div>
               <div style={S.lbBarTrack}>
                 <div style={{...S.lbBarFill,width:`${pct}%`,
                   background:i===0?"linear-gradient(90deg,#ff9a3c,#ff6b6b)":
                              i===1?"linear-gradient(90deg,#94a3b8,#64748b)":
-                             "linear-gradient(90deg,#d97706,#b45309)"}}/>
+                                   "linear-gradient(90deg,#d97706,#b45309)"}}/>
               </div>
             </div>
-            <div style={{textAlign:"center",minWidth:60}}>
-              <span style={{display:"block",fontSize:22,fontWeight:"bold",color:"#ff6b6b",lineHeight:1}}>{count}</span>
+            <div style={{textAlign:"center",minWidth:58}}>
+              <span style={{display:"block",fontSize:20,fontWeight:"bold",color:"#ff6b6b",lineHeight:1}}>{count}</span>
               <span style={{fontSize:10,color:"#9e8c79"}}>💩 cleaned</span>
             </div>
           </div>
         );
       })}
-      <div style={{textAlign:"center",fontSize:13,color:"#9e8c79",marginTop:4,paddingTop:8,borderTop:"1px solid #f0e6d3"}}>
-        Total poops cleaned: <b>{total}</b> 💩
-      </div>
+      <div style={{textAlign:"center",fontSize:13,color:"#9e8c79",paddingTop:8,borderTop:"1px solid #f0e6d3"}}>Total: <b>{total}</b> 💩</div>
+    </div>
+  );
+}
+
+function LitterLeaderboard({ events }) {
+  const litters=events.filter(e=>e.type==="litter");
+  const counts={}; litters.forEach(e=>{ const u=e.logged_by||e.loggedBy; counts[u]=(counts[u]||0)+1; });
+  const ranked=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  const total=litters.length;
+  const medals=["🥇","🥈","🥉"];
+  if (!ranked.length) return <div style={S.tip}><p style={{textAlign:"center",color:"#9e8c79"}}>No litter cleans yet!</p></div>;
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {ranked.map(([user,count],i)=>{
+        const pct=total>0?Math.round((count/total)*100):0;
+        const isFirst=i===0;
+        return (
+          <div key={user} style={{...S.lbRow,...(isFirst?{...S.lbFirst,borderColor:"#6366f1"}:{})}}>
+            <div style={{width:34,textAlign:"center"}}><span style={{fontSize:isFirst?26:18}}>{medals[i]||`#${i+1}`}</span></div>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <span style={{fontSize:isFirst?16:14,fontWeight:"bold",color:"#2d1f14"}}>{user}</span>
+                {isFirst && <span style={{...S.lbCrown,color:"#6366f1",background:"#f0f4ff"}}>🏆 Litter Hero</span>}
+              </div>
+              <div style={S.lbBarTrack}>
+                <div style={{...S.lbBarFill,width:`${pct}%`,
+                  background:i===0?"linear-gradient(90deg,#6366f1,#8b5cf6)":
+                             i===1?"linear-gradient(90deg,#94a3b8,#64748b)":
+                                   "linear-gradient(90deg,#d97706,#b45309)"}}/>
+              </div>
+            </div>
+            <div style={{textAlign:"center",minWidth:58}}>
+              <span style={{display:"block",fontSize:20,fontWeight:"bold",color:"#6366f1",lineHeight:1}}>{count}</span>
+              <span style={{fontSize:10,color:"#9e8c79"}}>🪣 cleans</span>
+            </div>
+          </div>
+        );
+      })}
+      <div style={{textAlign:"center",fontSize:13,color:"#9e8c79",paddingTop:8,borderTop:"1px solid #f0e6d3"}}>Total: <b>{total}</b> 🪣</div>
     </div>
   );
 }
 
 // ─── Log View ─────────────────────────────────────────────────────────────────
-function LogView({events,onDelete,catName}) {
+function LogView({ events, onDelete, catName }) {
   const grouped=groupByDate(events);
   const keys=Object.keys(grouped).sort((a,b)=>new Date(b)-new Date(a));
-  if(!keys.length) return <div style={S.empty}><div style={{fontSize:48}}>🐱</div><p>No events yet!<br/>Tap a button when {catName} goes.</p></div>;
-  return <div>{keys.map(k=>(
-    <div key={k}>
-      <div style={S.dateHdr}>{fmtDate(new Date(k))}</div>
-      {grouped[k].map(ev=><EventRow key={ev.id} event={ev} onDelete={onDelete}/>)}
+  if (!keys.length) return <div style={S.empty}><div style={{fontSize:48}}>🐱</div><p>No events yet!<br/>Tap a button when {catName} goes.</p></div>;
+  return (
+    <div>
+      {keys.map(k=>(
+        <div key={k}>
+          <div style={S.dateHdr}>{fmtDate(new Date(k))}</div>
+          {grouped[k].map(ev=><EventRow key={ev.id} event={ev} onDelete={onDelete}/>)}
+        </div>
+      ))}
     </div>
-  ))}</div>;
+  );
 }
 
-function EventRow({event,onDelete}) {
+function EventRow({ event, onDelete }) {
   const [confirm,setConfirm]=useState(false);
+  const icon  = event.type==="poop"?"💩":event.type==="pee"?"💧":"🪣";
+  const label = event.type==="poop"?"Pooped":event.type==="pee"?"Peed":"Cleaned Litter";
+  const who   = event.logged_by||event.loggedBy;
   return (
     <div style={S.eRow}>
-      <div style={{fontSize:24,width:32,textAlign:"center"}}>{event.type==="poop"?"💩":"💧"}</div>
+      <div style={{fontSize:22,width:30,textAlign:"center"}}>{icon}</div>
       <div style={{flex:1}}>
-        <div style={S.eType}>{event.type==="poop"?"Pooped":"Peed"}
-          {event.note&&<span style={S.eNote}> · {event.note}</span>}</div>
-        <div style={S.eMeta}>{fmt(new Date(event.timestamp))} · {event.logged_by}</div>
+        <div style={S.eType}>{label}{event.note&&<span style={S.eNote}> · {event.note}</span>}</div>
+        <div style={S.eMeta}>{fmt(new Date(event.timestamp))} · {who}</div>
       </div>
       {confirm
-        ?<><button style={S.delY} onClick={()=>onDelete(event.id)}>Yes</button>
-           <button style={S.delN} onClick={()=>setConfirm(false)}>No</button></>
-        :<button style={S.delBtn} onClick={()=>setConfirm(true)}>✕</button>}
+        ? <><button style={S.delY} onClick={()=>onDelete(event.id)}>Yes</button><button style={S.delN} onClick={()=>setConfirm(false)}>No</button></>
+        : <button style={S.delBtn} onClick={()=>setConfirm(true)}>✕</button>}
     </div>
   );
 }
 
 // ─── Calendar ─────────────────────────────────────────────────────────────────
-function CalView({events}) {
+function CalView({ events }) {
   const now=new Date();
   const [cur,setCur]=useState({y:now.getFullYear(),m:now.getMonth()});
   const [sel,setSel]=useState(null);
-  const{y,m}=cur;
+  const {y,m}=cur;
   const firstDay=new Date(y,m,1).getDay();
-  const days=new Date(y,m+1,0).getDate();
+  const daysInMonth=new Date(y,m+1,0).getDate();
   const monthLabel=new Intl.DateTimeFormat("en-US",{month:"long",year:"numeric"}).format(new Date(y,m));
   const map={};
   events.forEach(e=>{
     const d=new Date(e.timestamp);
-    if(d.getFullYear()===y&&d.getMonth()===m){
+    if (d.getFullYear()===y&&d.getMonth()===m) {
       const k=d.getDate();
-      if(!map[k]) map[k]={poop:0,pee:0,evs:[]};
-      map[k][e.type]++;map[k].evs.push(e);
+      if (!map[k]) map[k]={poop:0,pee:0,litter:0,evs:[]};
+      map[k][e.type]++; map[k].evs.push(e);
     }
   });
   const cells=[];
-  for(let i=0;i<firstDay;i++) cells.push(null);
-  for(let d=1;d<=days;d++) cells.push(d);
+  for (let i=0;i<firstDay;i++) cells.push(null);
+  for (let d=1;d<=daysInMonth;d++) cells.push(d);
   const selEvs=sel&&map[sel]?map[sel].evs.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp)):[];
   return (
     <div style={{padding:16}}>
       <div style={S.calNav}>
-        <button style={S.calNBtn} onClick={()=>setCur(c=>{const nm=c.m===0?11:c.m-1;return{y:c.m===0?c.y-1:c.y,m:nm};})}>‹</button>
+        <button style={S.calNBtn} onClick={()=>setCur(c=>{ const nm=c.m===0?11:c.m-1; return{y:c.m===0?c.y-1:c.y,m:nm}; })}>‹</button>
         <span style={S.calMonth}>{monthLabel}</span>
-        <button style={S.calNBtn} onClick={()=>setCur(c=>{const nm=c.m===11?0:c.m+1;return{y:c.m===11?c.y+1:c.y,m:nm};})}>›</button>
+        <button style={S.calNBtn} onClick={()=>setCur(c=>{ const nm=c.m===11?0:c.m+1; return{y:c.m===11?c.y+1:c.y,m:nm}; })}>›</button>
       </div>
       <div style={S.calGrid}>
         {["Su","Mo","Tu","We","Th","Fr","Sa"].map(d=><div key={d} style={S.calDH}>{d}</div>)}
         {cells.map((day,i)=>{
-          if(!day) return <div key={`e${i}`}/>;
+          if (!day) return <div key={`e${i}`}/>;
           const info=map[day];
           const isToday=now.getFullYear()===y&&now.getMonth()===m&&now.getDate()===day;
           return (
-            <div key={day} style={{...S.calCell,...(isToday?S.calToday:{}),...(sel===day?S.calSel:{})}}
+            <div key={day}
+              style={{...S.calCell,...(isToday?S.calToday:{}),...(sel===day?S.calSel:{})}}
               onClick={()=>setSel(sel===day?null:day)}>
               <span style={S.calDN}>{day}</span>
-              {info&&<div style={{display:"flex",gap:2,flexWrap:"wrap",justifyContent:"center"}}>
-                {info.poop>0&&<span style={S.dPoop}>{info.poop>1?info.poop:""}</span>}
-                {info.pee>0&&<span style={S.dPee}>{info.pee>1?info.pee:""}</span>}
-              </div>}
+              {info && (
+                <div style={{display:"flex",gap:2,flexWrap:"wrap",justifyContent:"center"}}>
+                  {info.poop>0   && <span style={S.dPoop}>{info.poop>1?info.poop:""}</span>}
+                  {info.pee>0    && <span style={S.dPee}>{info.pee>1?info.pee:""}</span>}
+                  {info.litter>0 && <span style={S.dLitter}>{info.litter>1?info.litter:""}</span>}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
-      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:8,justifyContent:"center"}}>
-        <span style={S.dPoop}/><span style={{fontSize:12,color:"#6b5344"}}>Poop</span>
-        <span style={{...S.dPee,marginLeft:12}}/><span style={{fontSize:12,color:"#6b5344"}}>Pee</span>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:8,justifyContent:"center",flexWrap:"wrap"}}>
+        <span style={S.dPoop}/><span style={{fontSize:11,color:"#6b5344"}}>Poop</span>
+        <span style={{...S.dPee,marginLeft:8}}/><span style={{fontSize:11,color:"#6b5344"}}>Pee</span>
+        <span style={{...S.dLitter,marginLeft:8}}/><span style={{fontSize:11,color:"#6b5344"}}>Litter</span>
       </div>
-      {sel&&(
+      {sel && (
         <div style={{marginTop:14,background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 2px 8px rgba(0,0,0,.06)"}}>
           <div style={{fontWeight:"bold",fontSize:16,color:"#2d1f14",marginBottom:10}}>
             {new Intl.DateTimeFormat("en-US",{month:"long",day:"numeric"}).format(new Date(y,m,sel))}
           </div>
-          {selEvs.length===0?<p style={{color:"#9e8c79",fontSize:13}}>No events.</p>
-            :selEvs.map(ev=>(
-              <div key={ev.id} style={{display:"flex",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #faf0e4"}}>
-                <span style={{fontSize:18}}>{ev.type==="poop"?"💩":"💧"}</span>
-                <span style={{fontSize:14,color:"#2d1f14",marginLeft:8}}>{fmt(new Date(ev.timestamp))}</span>
-                {ev.note&&<span style={{color:"#9e8c79",fontStyle:"italic",fontSize:13,marginLeft:6}}>{ev.note}</span>}
-                <span style={{fontSize:12,color:"#b0a090",marginLeft:"auto"}}>by {ev.logged_by}</span>
-              </div>
-            ))}
+          {selEvs.length===0
+            ? <p style={{color:"#9e8c79",fontSize:13}}>No events.</p>
+            : selEvs.map(ev=>(
+                <div key={ev.id} style={{display:"flex",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #faf0e4"}}>
+                  <span style={{fontSize:16}}>{ev.type==="poop"?"💩":ev.type==="pee"?"💧":"🪣"}</span>
+                  <span style={{fontSize:13,color:"#2d1f14",marginLeft:8}}>{fmt(new Date(ev.timestamp))}</span>
+                  {ev.note && <span style={{color:"#9e8c79",fontStyle:"italic",fontSize:12,marginLeft:6}}>{ev.note}</span>}
+                  <span style={{fontSize:11,color:"#b0a090",marginLeft:"auto"}}>by {ev.logged_by||ev.loggedBy}</span>
+                </div>
+              ))}
         </div>
       )}
     </div>
@@ -476,12 +637,12 @@ function CalView({events}) {
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
-function StatsView({events,catName,health}) {
+function StatsView({ events, catName, health }) {
   const now=new Date();
   const cnt=(days,type)=>events.filter(e=>e.type===type&&(now-new Date(e.timestamp))/(1000*60*60*24)<=days).length;
   const avg=(type)=>{
     const t=events.filter(e=>e.type===type);
-    if(t.length<2) return t.length;
+    if (t.length<2) return t.length;
     const old=new Date(t[t.length-1].timestamp);
     return (t.length/Math.max(1,(now-old)/(1000*60*60*24))).toFixed(1);
   };
@@ -489,18 +650,23 @@ function StatsView({events,catName,health}) {
     <div style={{padding:20}}>
       <h2 style={S.statsTitle}>{catName}'s Overview</h2>
       <div style={S.sGrid}>
-        {[["💩","Poops (7d)",cnt(7,"poop")],["💧","Pees (7d)",cnt(7,"pee")],["💩","Avg/day",avg("poop")],["💧","Avg/day",avg("pee")]].map(([e,l,v])=>(
-          <div key={l} style={S.sCard}><div style={{fontSize:28}}>{e}</div><div style={S.sVal}>{v}</div><div style={S.sLbl}>{l}</div></div>
+        {[["💩","Poops (7d)",cnt(7,"poop")],["💧","Pees (7d)",cnt(7,"pee")],
+          ["💩","Avg/day",avg("poop")],    ["💧","Avg/day",avg("pee")]].map(([e,l,v])=>(
+          <div key={l} style={S.sCard}>
+            <div style={{fontSize:26}}>{e}</div>
+            <div style={S.sVal}>{v}</div>
+            <div style={S.sLbl}>{l}</div>
+          </div>
         ))}
       </div>
 
       <div style={S.secTitle}>Health Breakdown</div>
       <div style={S.tip}>
         {[
-          {label:"Poop frequency",value:health.poopCount,ideal:"7–14 per week",ok:health.poopCount>=7&&health.poopCount<=14},
-          {label:"Pee frequency",value:health.peeCount,ideal:"14–28 per week",ok:health.peeCount>=14&&health.peeCount<=28},
-          {label:"Last poop",value:health.hoursSincePoop<999?`${Math.round(health.hoursSincePoop)}h ago`:"No data",ideal:"Within 48h",ok:health.hoursSincePoop<48},
-          {label:"Last pee",value:health.hoursSincePee<999?`${Math.round(health.hoursSincePee)}h ago`:"No data",ideal:"Within 24h",ok:health.hoursSincePee<24},
+          {label:"Poop frequency", value:health.poopCount, ideal:`${health.idealPoopMin}–${health.idealPoopMax} this period`, ok:health.poopCount>=health.idealPoopMin&&health.poopCount<=health.idealPoopMax},
+          {label:"Pee frequency",  value:health.peeCount,  ideal:`${health.idealPeeMin}–${health.idealPeeMax} this period`,  ok:health.peeCount>=health.idealPeeMin&&health.peeCount<=health.idealPeeMax},
+          {label:"Last poop", value:health.hrsPoop<999?`${Math.round(health.hrsPoop)}h ago`:"No data", ideal:"Within 48h", ok:health.hrsPoop<48},
+          {label:"Last pee",  value:health.hrsPee<999?`${Math.round(health.hrsPee)}h ago`:"No data",  ideal:"Within 24h", ok:health.hrsPee<24},
         ].map(r=>(
           <div key={r.label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid #f0e6d3"}}>
             <div>
@@ -509,7 +675,7 @@ function StatsView({events,catName,health}) {
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
               <span style={{fontSize:13,fontWeight:"bold",color:"#2d1f14"}}>{r.value}</span>
-              <span style={{fontSize:16}}>{r.ok?"✅":"⚠️"}</span>
+              <span style={{fontSize:15}}>{r.ok?"✅":"⚠️"}</span>
             </div>
           </div>
         ))}
@@ -517,129 +683,149 @@ function StatsView({events,catName,health}) {
 
       <div style={S.secTitle}>💩 Poop Cleaner Rankings</div>
       <PoopLeaderboard events={events}/>
+      <div style={S.secTitle}>🪣 Litter Cleaner Rankings</div>
+      <LitterLeaderboard events={events}/>
     </div>
   );
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
-function SettingsView({catName,username,onUpdate}) {
-  const [u,setU]=useState(username);const [c,setC]=useState(catName);const [saved,setSaved]=useState(false);
+function SettingsView({ catName, username, roomCode, onUpdate, onLeave }) {
+  const [u,setU]=useState(username); const [c,setC]=useState(catName);
+  const [saved,setSaved]=useState(false);
   return (
     <div style={{padding:20}}>
       <h2 style={S.statsTitle}>Settings</h2>
-      <div style={{marginBottom:14}}><label style={S.lbl}>Your name</label>
-        <input style={S.input} value={u} onChange={e=>setU(e.target.value)}/></div>
-      <div style={{marginBottom:14}}><label style={S.lbl}>Cat's name</label>
-        <input style={S.input} value={c} onChange={e=>setC(e.target.value)}/></div>
-      <button style={S.saveBtn} onClick={()=>{onUpdate(u.trim()||"You",c.trim()||"Whiskers");setSaved(true);setTimeout(()=>setSaved(false),2000);}}>
-        {saved?"Saved ✓":"Save Changes"}</button>
+      <div style={{background:"#f0f4ff",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#6366f1"}}>
+        <b>Room code: {roomCode}</b><br/>
+        <span style={{fontSize:12,color:"#6b7280"}}>Share with your partner to join the same room</span>
+      </div>
+      <div style={{marginBottom:14}}><label style={S.lbl}>Your name</label><input style={S.input} value={u} onChange={e=>setU(e.target.value)}/></div>
+      <div style={{marginBottom:14}}><label style={S.lbl}>Cat's name</label><input style={S.input} value={c} onChange={e=>setC(e.target.value)}/></div>
+      <button style={S.saveBtn} onClick={()=>{ onUpdate(u.trim()||"You",c.trim()||"Cat"); setSaved(true); setTimeout(()=>setSaved(false),2000); }}>
+        {saved?"Saved ✓":"Save Changes"}
+      </button>
       <div style={S.secTitle}>Real-time sync</div>
       <div style={S.tip}>
-        <p>✅ Powered by <b>Supabase</b> — logs sync instantly between all users.</p>
-        <p style={{marginTop:8}}>📱 <b>Add to Home Screen:</b> In Safari tap Share → "Add to Home Screen". In Chrome tap menu → "Add to Home Screen".</p>
+        <p>✅ Powered by <b>Supabase</b> — logs sync instantly for everyone in the room.</p>
+        <p style={{marginTop:8}}>📱 <b>Add to Home Screen:</b> In Safari tap Share → "Add to Home Screen". In Chrome tap ⋮ menu → "Add to Home Screen".</p>
+      </div>
+      <div style={S.secTitle}>Switch Room</div>
+      <button style={{...S.dangerBtn,color:"#6366f1",borderColor:"#6366f1"}} onClick={onLeave}>🚪 Leave room & switch</button>
+    </div>
+  );
+}
+
+// ─── Shared Components ────────────────────────────────────────────────────────
+function SItem({ emoji, label, value, urgent }) {
+  return (
+    <div style={S.statItem}>
+      <span style={{fontSize:18}}>{emoji}</span>
+      <div>
+        <div style={S.statLbl}>{label}</div>
+        <div style={{...S.statVal, color:urgent?"#ef4444":"#1a1a2e"}}>{value}</div>
       </div>
     </div>
   );
 }
 
-function StatItem({emoji,label,value,urgent}) {
-  return (
-    <div style={S.statItem}>
-      <span style={{fontSize:20}}>{emoji}</span>
-      <div><div style={S.statLbl}>{label}</div>
-        <div style={{...S.statVal,color:urgent?"#ef4444":"#1a1a2e"}}>{value}</div></div>
-    </div>
-  );
-}
-
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const S={
-  app:{fontFamily:"Georgia,serif",background:"#fef9f0",minHeight:"100vh",maxWidth:480,margin:"0 auto",paddingBottom:40},
-  header:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",padding:"14px 20px",boxShadow:"0 2px 12px rgba(255,107,107,.3)"},
-  hInner:{display:"flex",alignItems:"center",justifyContent:"space-between"},
-  hLeft:{display:"flex",alignItems:"center",gap:10},
-  appName:{fontWeight:"bold",fontSize:20,color:"#fff"},
-  catLabel:{fontSize:12,color:"rgba(255,255,255,.8)"},
-  userChip:{background:"rgba(255,255,255,.25)",color:"#fff",padding:"4px 12px",borderRadius:20,fontSize:13,display:"flex",alignItems:"center",gap:6},
-  dot:{width:7,height:7,borderRadius:"50%",display:"inline-block"},
-  healthWrap:{background:"#fff",padding:"16px 20px 12px",borderBottom:"1px solid #f0e6d3"},
-  healthTop:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10},
-  healthLabel:{fontSize:11,fontWeight:"bold",color:"#9e8c79",textTransform:"uppercase",letterSpacing:"1px",marginBottom:4},
-  healthScore:{fontSize:32,fontWeight:"bold",lineHeight:1},
-  healthMax:{fontSize:14,color:"#9e8c79"},
-  healthBadge:{fontSize:12,fontWeight:"bold",padding:"2px 10px",borderRadius:20},
-  healthDetail:{fontSize:12,color:"#6b5344",marginTop:4,fontStyle:"italic"},
-  barTrack:{height:12,background:"#f0e6d3",borderRadius:6,overflow:"hidden",position:"relative"},
-  barFill:{height:"100%",borderRadius:6,transition:"width .6s ease"},
-  tick:{position:"absolute",top:0,bottom:0,width:2,background:"rgba(255,255,255,.6)"},
-  barLabels:{display:"flex",justifyContent:"space-between",marginTop:4,padding:"0 2px"},
-  banner:{display:"flex",background:"#fff",borderBottom:"1px solid #f0e6d3",padding:"10px 0"},
-  statItem:{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"0 4px"},
-  divider:{width:1,background:"#f0e6d3"},
-  statLbl:{fontSize:10,color:"#9e8c79",textTransform:"uppercase",letterSpacing:".5px"},
-  statVal:{fontSize:13,fontWeight:"bold"},
-  logSec:{padding:"20px 20px 14px",background:"#fef9f0"},
-  prompt:{textAlign:"center",color:"#6b5344",fontSize:14,margin:"0 0 12px",fontStyle:"italic"},
-  btnRow:{display:"flex",gap:14},
-  logBtn:{flex:1,border:"none",borderRadius:18,padding:"18px 0",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,boxShadow:"0 4px 16px rgba(0,0,0,.1)",transition:"transform .1s"},
-  poopBtn:{background:"linear-gradient(135deg,#8B4513,#a0522d)"},
-  peeBtn:{background:"linear-gradient(135deg,#f0c030,#f5a623)"},
-  btnLbl:{color:"#fff",fontWeight:"bold",fontSize:15},
-  backdrop:{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100},
-  modal:{background:"#fff",borderRadius:"20px 20px 0 0",padding:"24px 20px 32px",width:"100%",maxWidth:480,boxShadow:"0 -4px 30px rgba(0,0,0,.15)"},
-  modalTitle:{fontSize:20,fontWeight:"bold",color:"#2d1f14",marginBottom:18},
-  fSec:{marginBottom:16},
-  quickRow:{display:"flex",flexWrap:"wrap",gap:8,marginTop:6},
-  qBtn:{border:"1.5px solid #e8d5c0",borderRadius:20,padding:"6px 12px",fontSize:13,background:"#fef9f0",cursor:"pointer",color:"#6b5344"},
-  qBtnOn:{background:"#ff6b6b",borderColor:"#ff6b6b",color:"#fff",fontWeight:"bold"},
-  mBtns:{display:"flex",gap:10,marginTop:20},
-  cancelBtn:{flex:1,border:"1.5px solid #e8d5c0",borderRadius:12,padding:"12px 0",fontSize:15,background:"#fef9f0",cursor:"pointer",color:"#9e8c79"},
-  confirmBtn:{flex:2,border:"none",borderRadius:12,padding:"12px 0",fontSize:15,background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",fontWeight:"bold",cursor:"pointer"},
-  nav:{display:"flex",background:"#fff",borderTop:"1px solid #f0e6d3",borderBottom:"1px solid #f0e6d3"},
-  navBtn:{flex:1,border:"none",background:"transparent",padding:"11px 0",cursor:"pointer",fontSize:12,color:"#9e8c79",fontFamily:"Georgia,serif"},
-  navOn:{color:"#ff6b6b",borderBottom:"2px solid #ff6b6b",fontWeight:"bold"},
-  content:{paddingBottom:20},
-  dateHdr:{padding:"10px 20px 6px",fontSize:11,fontWeight:"bold",color:"#9e8c79",textTransform:"uppercase",letterSpacing:"1px",background:"#fef3e2"},
-  eRow:{display:"flex",alignItems:"center",padding:"12px 20px",background:"#fff",borderBottom:"1px solid #faf0e4",gap:12},
-  eType:{fontSize:15,fontWeight:"bold",color:"#2d1f14"},
-  eNote:{color:"#9e8c79",fontWeight:"normal",fontStyle:"italic",fontSize:13},
-  eMeta:{fontSize:12,color:"#9e8c79",marginTop:2},
-  delBtn:{background:"transparent",border:"none",color:"#ccc",cursor:"pointer",fontSize:16,padding:"4px 6px"},
-  delY:{background:"#ef4444",color:"#fff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:12},
-  delN:{background:"#e5e7eb",color:"#333",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:12,marginLeft:4},
-  empty:{textAlign:"center",color:"#9e8c79",padding:"40px 20px",lineHeight:1.6},
-  calNav:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12},
-  calNBtn:{background:"transparent",border:"1.5px solid #e8d5c0",borderRadius:8,padding:"6px 16px",fontSize:18,cursor:"pointer",color:"#ff6b6b"},
-  calMonth:{fontSize:17,fontWeight:"bold",color:"#2d1f14"},
-  calGrid:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3},
-  calDH:{textAlign:"center",fontSize:11,color:"#9e8c79",fontWeight:"bold",padding:"4px 0",textTransform:"uppercase"},
-  calCell:{borderRadius:10,minHeight:52,padding:"4px 4px 2px",cursor:"pointer",background:"#fff",border:"1.5px solid transparent",display:"flex",flexDirection:"column",alignItems:"center"},
-  calToday:{border:"1.5px solid #ff9a3c",background:"#fff8f0"},
-  calSel:{background:"#fff0f0",border:"1.5px solid #ff6b6b"},
-  calDN:{fontSize:13,color:"#2d1f14",fontWeight:"bold",marginBottom:2},
-  dPoop:{width:10,height:10,borderRadius:"50%",background:"#8B4513",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#fff",fontWeight:"bold"},
-  dPee:{width:10,height:10,borderRadius:"50%",background:"#f5a623",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#fff",fontWeight:"bold"},
-  statsTitle:{fontSize:20,color:"#2d1f14",marginBottom:16},
-  sGrid:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24},
-  sCard:{background:"#fff",borderRadius:16,padding:"16px 12px",textAlign:"center",boxShadow:"0 2px 8px rgba(0,0,0,.06)"},
-  sVal:{fontSize:28,fontWeight:"bold",color:"#ff6b6b"},
-  sLbl:{fontSize:12,color:"#9e8c79",marginTop:2},
-  secTitle:{fontSize:12,fontWeight:"bold",color:"#9e8c79",textTransform:"uppercase",letterSpacing:"1px",marginBottom:10,marginTop:20},
-  tip:{background:"#fff",borderRadius:14,padding:"14px 16px",fontSize:13,lineHeight:1.7,color:"#4a3728",boxShadow:"0 2px 8px rgba(0,0,0,.05)"},
-  saveBtn:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",border:"none",borderRadius:12,padding:"12px 24px",cursor:"pointer",fontWeight:"bold",fontSize:15,fontFamily:"Georgia,serif",marginBottom:8},
-  lbRow:{background:"#fff",borderRadius:16,padding:"14px 16px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 2px 8px rgba(0,0,0,.06)"},
-  lbFirst:{background:"linear-gradient(135deg,#fff8f0,#fff0e8)",border:"2px solid #ff9a3c",boxShadow:"0 4px 16px rgba(255,154,60,.2)"},
-  lbCrown:{fontSize:11,fontWeight:"bold",color:"#ff6b6b",background:"#fff0f0",padding:"2px 8px",borderRadius:20},
-  lbBarTrack:{height:8,background:"#f0e6d3",borderRadius:4,overflow:"hidden"},
-  lbBarFill:{height:"100%",borderRadius:4,transition:"width .5s ease"},
-  setupWrap:{minHeight:"100vh",background:"linear-gradient(160deg,#ff9a3c22,#ff6b6b11)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:"Georgia,serif"},
-  setupCard:{background:"#fff",borderRadius:24,padding:"36px 28px",maxWidth:380,width:"100%",boxShadow:"0 8px 40px rgba(255,107,107,.15)",textAlign:"center"},
-  setupTitle:{fontSize:32,fontWeight:"bold",color:"#ff6b6b",margin:"0 0 6px"},
-  setupSub:{color:"#9e8c79",fontSize:15,marginBottom:28},
-  setupBtn:{background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)",color:"#fff",border:"none",borderRadius:14,padding:"14px 0",width:"100%",cursor:"pointer",fontWeight:"bold",fontSize:16,fontFamily:"Georgia,serif",marginTop:8},
-  setupNote:{fontSize:12,color:"#b0a090",marginTop:18,lineHeight:1.6},
-  lbl:{display:"block",fontSize:12,color:"#9e8c79",fontWeight:"bold",textTransform:"uppercase",letterSpacing:".5px",marginBottom:6},
-  input:{width:"100%",border:"1.5px solid #e8d5c0",borderRadius:10,padding:"10px 14px",fontSize:15,background:"#fff",fontFamily:"Georgia,serif",outline:"none",boxSizing:"border-box"},
+const S = {
+  app:         { fontFamily:"Georgia,serif", background:"#fef9f0", minHeight:"100vh", maxWidth:480, margin:"0 auto", paddingBottom:40 },
+  header:      { background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)", padding:"12px 20px", boxShadow:"0 2px 12px rgba(255,107,107,.3)" },
+  hInner:      { display:"flex", alignItems:"center", justifyContent:"space-between" },
+  hLeft:       { display:"flex", alignItems:"center", gap:10 },
+  appName:     { fontWeight:"bold", fontSize:18, color:"#fff" },
+  catLabel:    { fontSize:11, color:"rgba(255,255,255,.8)" },
+  userChip:    { background:"rgba(255,255,255,.25)", color:"#fff", padding:"4px 10px", borderRadius:20, fontSize:12, display:"flex", alignItems:"center", gap:5 },
+  dot:         { width:6, height:6, borderRadius:"50%", display:"inline-block" },
+  reminderBanner: { background:"linear-gradient(135deg,#fef3c7,#fde68a)", padding:"10px 16px", display:"flex", alignItems:"center", gap:10, borderBottom:"1px solid #fcd34d" },
+  reminderText:   { flex:1, fontSize:13, fontWeight:"bold", color:"#92400e" },
+  reminderClose:  { background:"transparent", border:"none", fontSize:16, cursor:"pointer", color:"#92400e" },
+  healthWrap:  { background:"#fff", padding:"14px 20px 10px", borderBottom:"1px solid #f0e6d3" },
+  healthTop:   { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 },
+  healthLabel: { fontSize:11, fontWeight:"bold", color:"#9e8c79", textTransform:"uppercase", letterSpacing:"1px" },
+  tipBtn:      { background:"transparent", border:"none", fontSize:16, cursor:"pointer", padding:"0 2px", lineHeight:1 },
+  healthScore: { fontSize:30, fontWeight:"bold", lineHeight:1 },
+  healthMax:   { fontSize:13, color:"#9e8c79" },
+  healthBadge: { fontSize:11, fontWeight:"bold", padding:"2px 8px", borderRadius:20 },
+  healthDetail:{ fontSize:12, color:"#6b5344", marginTop:3, fontStyle:"italic" },
+  newDataNote: { fontSize:11, color:"#f59e0b", marginTop:3, fontWeight:"bold" },
+  barTrack:    { height:10, background:"#f0e6d3", borderRadius:5, overflow:"hidden", position:"relative" },
+  barFill:     { height:"100%", borderRadius:5, transition:"width .6s ease" },
+  tick:        { position:"absolute", top:0, bottom:0, width:2, background:"rgba(255,255,255,.5)" },
+  barLabels:   { display:"flex", justifyContent:"space-between", marginTop:3, padding:"0 2px" },
+  banner:      { display:"flex", background:"#fff", borderBottom:"1px solid #f0e6d3", padding:"8px 0" },
+  statItem:    { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:6, padding:"0 2px" },
+  div:         { width:1, background:"#f0e6d3" },
+  statLbl:     { fontSize:9,  color:"#9e8c79", textTransform:"uppercase", letterSpacing:".5px" },
+  statVal:     { fontSize:12, fontWeight:"bold" },
+  logSec:      { padding:"16px 16px 12px", background:"#fef9f0" },
+  prompt:      { textAlign:"center", color:"#6b5344", fontSize:13, margin:"0 0 10px", fontStyle:"italic" },
+  btnRow:      { display:"flex", gap:10 },
+  logBtn:      { flex:1, border:"none", borderRadius:16, padding:"14px 0", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:4, boxShadow:"0 4px 14px rgba(0,0,0,.1)", transition:"transform .1s" },
+  poopBtn:     { background:"linear-gradient(135deg,#8B4513,#a0522d)" },
+  peeBtn:      { background:"linear-gradient(135deg,#f0c030,#f5a623)" },
+  litBtn:      { background:"linear-gradient(135deg,#6366f1,#8b5cf6)" },
+  btnLbl:      { color:"#fff", fontWeight:"bold", fontSize:12 },
+  backdrop:    { position:"fixed", inset:0, background:"rgba(0,0,0,.45)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:100 },
+  modal:       { background:"#fff", borderRadius:"20px 20px 0 0", padding:"22px 20px 30px", width:"100%", maxWidth:480, boxShadow:"0 -4px 30px rgba(0,0,0,.15)", maxHeight:"90vh", overflowY:"auto" },
+  modalTitle:  { fontSize:18, fontWeight:"bold", color:"#2d1f14", marginBottom:16 },
+  litNote:     { background:"#f0f4ff", borderRadius:8, padding:"8px 12px", fontSize:12, color:"#6366f1", marginBottom:14 },
+  fSec:        { marginBottom:14 },
+  quickRow:    { display:"flex", flexWrap:"wrap", gap:6, marginTop:5 },
+  qBtn:        { border:"1.5px solid #e8d5c0", borderRadius:20, padding:"5px 10px", fontSize:12, background:"#fef9f0", cursor:"pointer", color:"#6b5344" },
+  qBtnOn:      { background:"#ff6b6b", borderColor:"#ff6b6b", color:"#fff", fontWeight:"bold" },
+  mBtns:       { display:"flex", gap:10, marginTop:18 },
+  cancelBtn:   { flex:1, border:"1.5px solid #e8d5c0", borderRadius:12, padding:"11px 0", fontSize:14, background:"#fef9f0", cursor:"pointer", color:"#9e8c79" },
+  confirmBtn:  { flex:2, border:"none", borderRadius:12, padding:"11px 0", fontSize:14, background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)", color:"#fff", fontWeight:"bold", cursor:"pointer" },
+  nav:         { display:"flex", background:"#fff", borderTop:"1px solid #f0e6d3", borderBottom:"1px solid #f0e6d3" },
+  navBtn:      { flex:1, border:"none", background:"transparent", padding:"10px 0", cursor:"pointer", fontSize:11, color:"#9e8c79", fontFamily:"Georgia,serif" },
+  navOn:       { color:"#ff6b6b", borderBottom:"2px solid #ff6b6b", fontWeight:"bold" },
+  content:     { paddingBottom:20 },
+  dateHdr:     { padding:"8px 20px 5px", fontSize:10, fontWeight:"bold", color:"#9e8c79", textTransform:"uppercase", letterSpacing:"1px", background:"#fef3e2" },
+  eRow:        { display:"flex", alignItems:"center", padding:"11px 18px", background:"#fff", borderBottom:"1px solid #faf0e4", gap:10 },
+  eType:       { fontSize:14, fontWeight:"bold", color:"#2d1f14" },
+  eNote:       { color:"#9e8c79", fontWeight:"normal", fontStyle:"italic", fontSize:12 },
+  eMeta:       { fontSize:11, color:"#9e8c79", marginTop:2 },
+  delBtn:      { background:"transparent", border:"none", color:"#ccc", cursor:"pointer", fontSize:15, padding:"4px" },
+  delY:        { background:"#ef4444", color:"#fff", border:"none", borderRadius:6, padding:"4px 8px", cursor:"pointer", fontSize:11 },
+  delN:        { background:"#e5e7eb", color:"#333", border:"none", borderRadius:6, padding:"4px 8px", cursor:"pointer", fontSize:11, marginLeft:3 },
+  empty:       { textAlign:"center", color:"#9e8c79", padding:"40px 20px", lineHeight:1.6 },
+  calNav:      { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 },
+  calNBtn:     { background:"transparent", border:"1.5px solid #e8d5c0", borderRadius:8, padding:"5px 14px", fontSize:17, cursor:"pointer", color:"#ff6b6b" },
+  calMonth:    { fontSize:16, fontWeight:"bold", color:"#2d1f14" },
+  calGrid:     { display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2 },
+  calDH:       { textAlign:"center", fontSize:10, color:"#9e8c79", fontWeight:"bold", padding:"3px 0", textTransform:"uppercase" },
+  calCell:     { borderRadius:8, minHeight:48, padding:"3px 2px 2px", cursor:"pointer", background:"#fff", border:"1.5px solid transparent", display:"flex", flexDirection:"column", alignItems:"center" },
+  calToday:    { border:"1.5px solid #ff9a3c", background:"#fff8f0" },
+  calSel:      { background:"#fff0f0", border:"1.5px solid #ff6b6b" },
+  calDN:       { fontSize:12, color:"#2d1f14", fontWeight:"bold", marginBottom:1 },
+  dPoop:       { width:9, height:9, borderRadius:"50%", background:"#8B4513", display:"inline-flex", alignItems:"center", justifyContent:"center", fontSize:7, color:"#fff", fontWeight:"bold" },
+  dPee:        { width:9, height:9, borderRadius:"50%", background:"#f5a623", display:"inline-flex", alignItems:"center", justifyContent:"center", fontSize:7, color:"#fff", fontWeight:"bold" },
+  dLitter:     { width:9, height:9, borderRadius:"50%", background:"#6366f1", display:"inline-flex", alignItems:"center", justifyContent:"center", fontSize:7, color:"#fff", fontWeight:"bold" },
+  statsTitle:  { fontSize:19, color:"#2d1f14", marginBottom:14 },
+  sGrid:       { display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20 },
+  sCard:       { background:"#fff", borderRadius:14, padding:"14px 10px", textAlign:"center", boxShadow:"0 2px 8px rgba(0,0,0,.06)" },
+  sVal:        { fontSize:26, fontWeight:"bold", color:"#ff6b6b" },
+  sLbl:        { fontSize:11, color:"#9e8c79", marginTop:2 },
+  secTitle:    { fontSize:11, fontWeight:"bold", color:"#9e8c79", textTransform:"uppercase", letterSpacing:"1px", marginBottom:8, marginTop:18 },
+  tip:         { background:"#fff", borderRadius:14, padding:"12px 14px", fontSize:13, lineHeight:1.7, color:"#4a3728", boxShadow:"0 2px 8px rgba(0,0,0,.05)" },
+  saveBtn:     { background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)", color:"#fff", border:"none", borderRadius:12, padding:"11px 22px", cursor:"pointer", fontWeight:"bold", fontSize:14, fontFamily:"Georgia,serif", marginBottom:8 },
+  dangerBtn:   { background:"#fff", color:"#ef4444", border:"1.5px solid #ef4444", borderRadius:10, padding:"9px 18px", cursor:"pointer", fontSize:13, fontFamily:"Georgia,serif" },
+  lbRow:       { background:"#fff", borderRadius:14, padding:"12px 14px", display:"flex", alignItems:"center", gap:10, boxShadow:"0 2px 8px rgba(0,0,0,.06)" },
+  lbFirst:     { background:"linear-gradient(135deg,#fff8f0,#fff0e8)", border:"2px solid #ff9a3c", boxShadow:"0 4px 14px rgba(255,154,60,.18)" },
+  lbCrown:     { fontSize:10, fontWeight:"bold", color:"#ff6b6b", background:"#fff0f0", padding:"2px 7px", borderRadius:20 },
+  lbBarTrack:  { height:7, background:"#f0e6d3", borderRadius:4, overflow:"hidden", marginTop:4 },
+  lbBarFill:   { height:"100%", borderRadius:4, transition:"width .5s ease" },
+  setupWrap:   { minHeight:"100vh", background:"linear-gradient(160deg,#ff9a3c22,#ff6b6b11)", display:"flex", alignItems:"center", justifyContent:"center", padding:20, fontFamily:"Georgia,serif" },
+  setupCard:   { background:"#fff", borderRadius:24, padding:"32px 24px", maxWidth:360, width:"100%", boxShadow:"0 8px 40px rgba(255,107,107,.15)", textAlign:"center" },
+  setupTitle:  { fontSize:28, fontWeight:"bold", color:"#ff6b6b", margin:"0 0 6px" },
+  setupSub:    { color:"#9e8c79", fontSize:14, marginBottom:20 },
+  setupBtn:    { background:"linear-gradient(135deg,#ff9a3c,#ff6b6b)", color:"#fff", border:"none", borderRadius:14, padding:"13px 0", width:"100%", cursor:"pointer", fontWeight:"bold", fontSize:15, fontFamily:"Georgia,serif", marginTop:6 },
+  setupNote:   { fontSize:11, color:"#b0a090", marginTop:16, lineHeight:1.6 },
+  lbl:         { display:"block", fontSize:11, color:"#9e8c79", fontWeight:"bold", textTransform:"uppercase", letterSpacing:".5px", marginBottom:5 },
+  input:       { width:"100%", border:"1.5px solid #e8d5c0", borderRadius:10, padding:"9px 12px", fontSize:14, background:"#fff", fontFamily:"Georgia,serif", outline:"none", boxSizing:"border-box" },
 };
 
 ReactDOM.render(<App/>, document.getElementById("root"));
